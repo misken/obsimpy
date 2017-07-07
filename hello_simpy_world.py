@@ -1,9 +1,9 @@
 import simpy
+import numpy as np
 
 """
 Hello world of SimPy. From tutorial in docs.
 """
-
 
 # Define an obpatient_flow "process"
 def obpatient_flow(env):
