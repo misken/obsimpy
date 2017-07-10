@@ -15,8 +15,14 @@ Details:
 - Generate arrivals via Poisson process
 - Define an OBUnit class that contains a simpy.Resource object as a member.
   Not subclassing Resource, just trying to use it as a member.
-- Routing is hard coded (no Router class yet)
-- Just trying to get objects/processes to communicate
+- Routing is done via setting ``out`` member of an OBUnit instance to
+ another OBUnit instance to which the OB patient flow instance should be
+ routed. The routing logic, for now, is in the main script. In addition,
+ the sequence of lengths of stay
+ Later,
+ we need some sort of router object and data driven routing.
+- Trying to get patient flow working without a process function that
+explicitly articulates the sequence of units and stays.
 
 """
 
@@ -150,9 +156,12 @@ class OBpatient(object):
 
         # Hard coding for now
 
-        self.planned_los_obs = prng.exponential(MEAN_LOS_OBS)
-        self.planned_los_ldr = prng.exponential(MEAN_LOS_LDR)
-        self.planned_los_pp = prng.exponential(MEAN_LOS_PP)
+        self.current_stay_num = 0
+        self.route_length = 3
+
+        self.planned_los[1] = prng.exponential(MEAN_LOS_OBS)
+        self.planned_los[2] = prng.exponential(MEAN_LOS_LDR)
+        self.planned_los[3] = prng.exponential(MEAN_LOS_PP)
 
     def __repr__(self):
         return "patientid: {}, arrstream: {}, time: {}". \
