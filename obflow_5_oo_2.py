@@ -2,10 +2,13 @@ import simpy
 import numpy as np
 from numpy.random import RandomState
 
+from collections import Mapping, Container
+from sys import getsizeof
+
 
 
 """
-Simple OB patient flow model 4 - Very simple OO
+Simple OB patient flow model 5 - Very simple OO
 
 Details:
 
@@ -58,6 +61,43 @@ class OBunit(object):
         self.num_exits = 0
         self.tot_occ_time = 0.0
 
+        self.out = None
+
+    def put(self, obp):
+
+        if self.debug:
+            print("{} trying to get {} at {}".format(obp.name, self.name, env.now))
+        bed_request_ts = env.now
+        bed_request = self.unit.request()  # Request a bed
+        yield bed_request
+        if self.debug:
+            print("{} entering {} at {}".format(obp.name, self.name, env.now))
+        self.num_entries += 1
+        enter_ts = env.now
+        if self.debug:
+            if env.now > bed_request_ts:
+                print("{} waited {} time units for {} bed".format(obp.name, env.now - bed_request_ts, self.name))
+
+        yield env.timeout(obp.planned_los_obs)  # Stay in obs bed
+
+        if debug:
+            print("{} trying to get LDR at {}".format(name, env.now))
+        bed_request_ts = env.now
+        bed_request2 = ldr_unit.unit.request()  # Request an obs bed
+        yield bed_request2
+
+        # Got LDR bed, release OBS bed
+        obs_unit.unit.release(bed_request1)  # Release the obs bed
+        obs_unit.num_exits += 1
+        exit_ts = env.now
+        obs_unit.tot_occ_time += exit_ts - enter_ts
+
+        yield self.env.timeout(msg.size * 8.0 / self.rate)
+        self.out.put(msg)
+        self.busy = 0
+        if self.debug:
+            print(msg)
+
     def basic_stats_msg(self):
 
         msg = "{:6}:\t Entries={}, Exits={}, ALOS={:4.2f}".format(self.name,
@@ -65,6 +105,40 @@ class OBunit(object):
                                                               self.num_exits,
                                                               self.tot_occ_time / self.num_exits)
         return msg
+
+class ExitFlow(object):
+    """ Patients routed here when ready to exit.
+
+        Patient objects put into a Store. Can be accessed later for stats and logs. A little
+        worried about how big the Store will get.
+
+        Parameters
+        ----------
+        env : simpy.Environment
+            the simulation environment
+        debug : boolean
+            if true then patient details printed on arrival
+
+
+    """
+
+    def __init__(self, env, debug=False):
+        self.store = simpy.Store(env)
+        self.env = env
+        self.debug = debug
+        self.num_exits = 0
+        self.last_exit = 0.0
+
+    def put(self, obp):
+
+        self.last_exit = self.env.now
+        self.num_exits += 1
+
+        if self.debug:
+            print(obp)
+
+        # Store patient
+        return self.store.put(obp)
 
 
 class OBpatient(object):
@@ -111,6 +185,7 @@ class OBPatientGenerator(object):
         self.initial_delay = initial_delay
         self.stoptime = stoptime
         self.debug = debug
+        self.out = None
         self.num_patients_created = 0
 
         self.prng = RandomState(RNG_SEED)
@@ -132,10 +207,11 @@ class OBPatientGenerator(object):
             self.num_patients_created += 1
             # Create new patient
             obp = OBpatient(self.env.now, self.arr_stream, patient_id=self.num_patients_created, prng=self.prng)
+            self.out.put(obp)
             # Create a new flow instance for this patient. The OBpatient object carries all necessary info.
-            obflow = obpatient_flow(env, obp, self.debug)
+            #obflow = obpatient_flow(env, obp, self.debug)
             # Register the new flow instance as a SimPy process.
-            self.env.process(obflow)
+            #self.env.process(obflow)
 
 
 def obpatient_flow(env, obp, debug=False):
@@ -236,22 +312,36 @@ rho_pp = ARR_RATE * MEAN_LOS_PP / CAPACITY_PP
 
 print("rho_obs: {:6.3f}, rho_ldr: {:6.3f}, rho_pp: {:6.3f}".format(rho_obs, rho_ldr, rho_pp))
 
+# Create a patient generator
+obpat_gen = OBPatientGenerator(env, "Type1", ARR_RATE, 0, debug=True)
 
-# Declare a Resource to model OBS unit
+# Create nursing units
 obs_unit = OBunit(env, "OBS", CAPACITY_OBS, debug=True)
 ldr_unit = OBunit(env, "LDR", CAPACITY_LDR, debug=True)
 pp_unit = OBunit(env, "PP", CAPACITY_PP, debug=True)
 
+# Define system exit
+exitflow = ExitFlow(env)
+
+# Define routing logic
+obpat_gen.out = obs_unit
+obs_unit.out = ldr_unit
+ldr_unit.out = pp_unit
+pp_unit.out = exitflow
+
 # Run the simulation for a while
-runtime = 100000
-debug = False
+runtime = 1000
+env.run(until=runtime)
 
-obpat_gen = OBPatientGenerator(env, "Type1", ARR_RATE, 0, runtime, debug=debug)
-env.run()
-
+# Patient generator stats
 print("\nNum patients generated: {}\n".format(obpat_gen.num_patients_created))
+
+# Unit stats
 print(obs_unit.basic_stats_msg())
 print(ldr_unit.basic_stats_msg())
 print(pp_unit.basic_stats_msg())
 
+# System exit stats
+print("\nNum patients exit system: {}\n".format(exitflow.num_exits))
+print("\nLast exit at: {}\n".format(exitflow.last_exit))
 
