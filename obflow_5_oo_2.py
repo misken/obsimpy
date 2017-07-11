@@ -13,9 +13,7 @@ Details:
   Not subclassing Resource, just trying to use it as a member.
 - Routing is done via setting ``out`` member of an OBUnit instance to
  another OBUnit instance to which the OB patient flow instance should be
- routed. The routing logic, for now, is in the main script. In addition,
- the sequence of lengths of stay
- Later,
+ routed. The routing logic, for now, is in OBUnit object. Later,
  we need some sort of router object and data driven routing.
 - Trying to get patient flow working without a process function that
 explicitly articulates the sequence of units and stays.
@@ -23,7 +21,7 @@ explicitly articulates the sequence of units and stays.
 Key Lessons Learned:
 
 - Any function that is a generator and might potentially yield for an event must get registered
-  as a process. For
+  as a process.
 
 """
 
@@ -59,30 +57,49 @@ class OBunit(object):
         else:
             self.capacity = capacity
 
-        self.unit = simpy.Resource(env, capacity)
         self.env = env
         self.name = name
-
         self.debug = debug
+
+        # Use a simpy Resource as one of the class members
+        self.unit = simpy.Resource(env, capacity)
+
+        # Statistical accumulators
         self.num_entries = 0
         self.num_exits = 0
         self.tot_occ_time = 0.0
 
+        # The out member will get set to destination unit
         self.out = None
 
 
     def put(self, obp):
+        """ A process method called when a bed is requested in the unit.
+
+            The logic of this method is reminiscent of the routing logic
+            in the process oriented obflow models 1-3. However, this method
+            is used for all of the units - no repeated logic.
+
+            Parameters
+            ----------
+            obp : OBPatient object
+                the patient requestion the bed
+
+        """
 
         if self.debug:
-            print("{} trying to get {} at {}".format(obp.name, self.name, env.now))
+            print("{} trying to get {} at {:.4f}".format(obp.name, self.name, env.now))
 
+        # Increments patient's attribute number of units visited
         obp.current_stay_num += 1
         # Timestamp of request time
         bed_request_ts = env.now
         # Request a bed
         bed_request = self.unit.request()
+        # Store the bed request and associated timestamp in patient's request lists
         obp.bed_requests[obp.current_stay_num] = bed_request
         obp.request_entry_ts[obp.current_stay_num] = env.now
+        # Yield until we get a bed
         yield bed_request
 
         # Seized a bed.
