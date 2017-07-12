@@ -81,7 +81,7 @@ class OBpatient(object):
         self.planned_los_pp = prng.exponential(MEAN_LOS_PP)
 
     def __repr__(self):
-        return "patientid: {}, arrstream: {}, time: {}". \
+        return "patientid: {}, arr_stream: {}, time: {}". \
             format(self.patient_id, self.arrstream, self.arrtime)
 
 
