@@ -72,7 +72,7 @@ class OBunit(object):
         # The out member will get set to destination unit
         self.out = None
 
-    def put(self, env, obp):
+    def put(self, obp):
         """ A process method called when a bed is requested in the unit.
 
             The logic of this method is reminiscent of the routing logic
@@ -91,22 +91,22 @@ class OBunit(object):
 
         if self.debug:
             print("{} trying to get {} at {:.4f}".format(obp.name,
-                                                         self.name, env.now))
+                                                    self.name, self.env.now))
 
         # Increments patient's attribute number of units visited
         obp.current_stay_num += 1
         # Timestamp of request time
-        bed_request_ts = env.now
+        bed_request_ts = self.env.now
         # Request a bed
         bed_request = self.unit.request()
         # Store bed request and timestamp in patient's request lists
         obp.bed_requests[obp.current_stay_num] = bed_request
-        obp.request_entry_ts[obp.current_stay_num] = env.now
+        obp.request_entry_ts[obp.current_stay_num] = self.env.now
         # Yield until we get a bed
         yield bed_request
 
         # Seized a bed.
-        obp.entry_ts[obp.current_stay_num] = env.now
+        obp.entry_ts[obp.current_stay_num] = self.env.now
 
         # Check if we have a bed from a previous stay and release it.
         # Update stats for previous unit.
@@ -119,32 +119,33 @@ class OBunit(object):
             previous_unit.unit.release(previous_request)
             previous_unit.num_exits += 1
             previous_unit.tot_occ_time += \
-                env.now - obp.entry_ts[obp.current_stay_num - 1]
-            obp.exit_ts[obp.current_stay_num - 1] = env.now
+                self.env.now - obp.entry_ts[obp.current_stay_num - 1]
+            obp.exit_ts[obp.current_stay_num - 1] = self.env.now
 
         if self.debug:
-            print("{} entering {} at {}".format(obp.name, self.name, env.now))
+            print("{} entering {} at {:.4f}".format(obp.name, self.name,
+                                                self.env.now))
         self.num_entries += 1
         if self.debug:
-            if env.now > bed_request_ts:
-                wait = env.now - bed_request_ts,
-                print("{} waited {} time units for {} bed".format(obp.name,
-                                                                  wait,
+            if self.env.now > bed_request_ts:
+                waittime = self.env.now - bed_request_ts
+                print("{} waited {:.4f} time units for {} bed".format(obp.name,
+                                                                  waittime,
                                                                   self.name))
 
         # Determine los and then yield for the stay
         los = obp.planned_los[obp.current_stay_num]
-        yield env.timeout(los)
+        yield self.env.timeout(los)
 
         # Go to next destination (which could be an exitflow)
         next_unit_name = obp.planned_route_stop[obp.current_stay_num + 1]
         self.out = obunits[next_unit_name]
         if obp.current_stay_num == obp.route_length:
             # For ExitFlow object, no process needed
-            self.out.put(self.env, obp)
+            self.out.put(obp)
         else:
             # Process for putting patient into next bed
-            self.env.process(self.out.put(self.env, obp))
+            self.env.process(self.out.put(obp))
 
     # def get(self, unit):
     #     """ Release """
@@ -194,7 +195,7 @@ class ExitFlow(object):
         self.num_exits = 0
         self.last_exit = 0.0
 
-    def put(self, env, obp):
+    def put(self, obp):
 
         if obp.bed_requests[obp.current_stay_num] is not None:
             previous_request = obp.bed_requests[obp.current_stay_num]
@@ -202,9 +203,9 @@ class ExitFlow(object):
             previous_unit = obunits[previous_unit_name]
             previous_unit.unit.release(previous_request)
             previous_unit.num_exits += 1
-            previous_unit.tot_occ_time += env.now - obp.entry_ts[
+            previous_unit.tot_occ_time += self.env.now - obp.entry_ts[
                 obp.current_stay_num]
-            obp.exit_ts[obp.current_stay_num - 1] = env.now
+            obp.exit_ts[obp.current_stay_num - 1] = self.env.now
 
         self.last_exit = self.env.now
         self.num_exits += 1
@@ -305,6 +306,9 @@ class OBPatientGenerator(object):
             the simulation environment
         arr_rate : float
             Poisson arrival rate (expected number of arrivals per unit time)
+        patient_type : int
+            Patient type id (default 1). Currently just one patient type.
+            In our prior research work we used a scheme with 11 patient types.
         arr_stream : int
             Arrival stream id (default 1). Currently there is just one arrival
             stream corresponding to the one patient generator class. In future,
@@ -327,7 +331,6 @@ class OBPatientGenerator(object):
                  stoptime=simpy.core.Infinity,
                  max_arrivals=simpy.core.Infinity, debug=False):
 
-        self.id = id
         self.env = env
         self.arr_rate = arr_rate
         self.patient_type = patient_type
@@ -366,13 +369,16 @@ class OBPatientGenerator(object):
                 print("Patient {} created at {:.2f}.".format(
                     self.num_patients_created, self.env.now))
 
+            # Set out member to OBunit object representing next destination
             self.out = obunits[obp.planned_route_stop[1]]
-            self.env.process(self.out.put(self.env, obp))
+            # Initiate process of requesting first bed in route
+            self.env.process(self.out.put(obp))
 
 
 # Initialize a simulation environment
 simenv = simpy.Environment()
 
+# Compute and display traffic intensities
 rho_obs = ARR_RATE * MEAN_LOS_OBS / CAPACITY_OBS
 rho_ldr = ARR_RATE * MEAN_LOS_LDR / CAPACITY_LDR
 rho_pp = ARR_RATE * MEAN_LOS_PP / CAPACITY_PP
@@ -383,7 +389,7 @@ print("rho_obs: {:6.3f}\nrho_ldr: {:6.3f}\nrho_pp: {:6.3f}".format(rho_obs,
 
 # Create nursing units
 obs_unit = OBunit(simenv, 'OBS', CAPACITY_OBS, debug=False)
-ldr_unit = OBunit(simenv, 'LDR', CAPACITY_LDR, debug=False)
+ldr_unit = OBunit(simenv, 'LDR', CAPACITY_LDR, debug=True)
 pp_unit = OBunit(simenv, 'PP', CAPACITY_PP, debug=False)
 
 # Define system exit
