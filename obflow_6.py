@@ -61,7 +61,7 @@ class OBunit(object):
 
     """
 
-    def __init__(self, env, name, capacity=None, debug=False):
+    def __init__(self, env, name, capacity=None, trace=False):
         if capacity is None:
             self.capacity = simpy.core.Infinity
         else:
@@ -69,7 +69,7 @@ class OBunit(object):
 
         self.env = env
         self.name = name
-        self.debug = debug
+        self.trace = trace
 
         # Use a simpy Resource as one of the class members
         self.unit = simpy.Resource(env, capacity)
@@ -99,7 +99,7 @@ class OBunit(object):
 
         """
 
-        if self.debug:
+        if self.trace:
             print("{} trying to get {} at {:.4f}".format(obp.name,
                                                     self.name, self.env.now))
 
@@ -132,11 +132,11 @@ class OBunit(object):
                 self.env.now - obp.entry_ts[obp.current_stay_num - 1]
             obp.exit_ts[obp.current_stay_num - 1] = self.env.now
 
-        if self.debug:
+        if self.trace:
             print("{} entering {} at {:.4f}".format(obp.name, self.name,
                                                 self.env.now))
         self.num_entries += 1
-        if self.debug:
+        if self.trace:
             if self.env.now > bed_request_ts:
                 waittime = self.env.now - bed_request_ts
                 print("{} waited {:.4f} time units for {} bed".format(obp.name,
@@ -398,9 +398,9 @@ print("rho_obs: {:6.3f}\nrho_ldr: {:6.3f}\nrho_pp: {:6.3f}".format(rho_obs,
                                                                    rho_pp))
 
 # Create nursing units
-obs_unit = OBunit(simenv, 'OBS', CAPACITY_OBS, debug=False)
-ldr_unit = OBunit(simenv, 'LDR', CAPACITY_LDR, debug=True)
-pp_unit = OBunit(simenv, 'PP', CAPACITY_PP, debug=False)
+obs_unit = OBunit(simenv, 'OBS', CAPACITY_OBS, trace=False)
+ldr_unit = OBunit(simenv, 'LDR', CAPACITY_LDR, trace=True)
+pp_unit = OBunit(simenv, 'PP', CAPACITY_PP, trace=False)
 
 # Define system exit
 exitflow = ExitFlow(simenv, 'EXIT', store_obp=False)
