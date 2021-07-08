@@ -375,6 +375,7 @@ class OBStaticRouter(object):
         obpatient.route_graph = self.route_graphs[obpatient.patient_type]
         obpatient.route_length = len(obpatient.route_graph.nodes)
 
+        k_obs = self.obsystem.global_vars['num_erlang_stages_obs']
         mean_los_obs = self.obsystem.global_vars['mean_los_obs']
         k_ldr = self.obsystem.global_vars['num_erlang_stages_ldr']
         mean_los_ldr = self.obsystem.global_vars['mean_los_ldr']
@@ -383,9 +384,9 @@ class OBStaticRouter(object):
         mean_los_pp_c = self.obsystem.global_vars['mean_los_pp_c']
 
         if obpatient.patient_type == PatientType.REG_DELIVERY_UNSCHED:
-            obpatient.route_graph.nodes[Unit.OBS]['planned_los'] = self.rg.exponential(mean_los_obs)
-            obpatient.route_graph.nodes[Unit.LDR]['planned_los'] = self.rg.gamma(k_ldr, mean_los_ldr)
-            obpatient.route_graph.nodes[Unit.PP]['planned_los'] = self.rg.gamma(k_pp, mean_los_pp_noc)
+            obpatient.route_graph.nodes[Unit.OBS]['planned_los'] = self.rg.gamma(k_obs, mean_los_obs / k_obs)
+            obpatient.route_graph.nodes[Unit.LDR]['planned_los'] = self.rg.gamma(k_ldr, mean_los_ldr / k_ldr)
+            obpatient.route_graph.nodes[Unit.PP]['planned_los'] = self.rg.gamma(k_pp, mean_los_pp_noc / k_pp)
 
         elif obpatient.patient_type == PatientType.CSECT_DELIVERY_UNSCHED:
             k_csect = self.obsystem.global_vars['num_erlang_stages_csect']
@@ -515,13 +516,14 @@ env = simpy.Environment()
 global_vars = {
     'arrival_rate': 0.4,
     'mean_los_obs': 3.0,
+    'num_erlang_stages_obs': 4,
     'mean_los_ldr': 12.0,
-    'num_erlang_stages_ldr': 1,
+    'num_erlang_stages_ldr': 4,
     'mean_los_pp_c': 72.0,
     'mean_los_pp_noc': 48.0,
-    'num_erlang_stages_pp': 1,
+    'num_erlang_stages_pp': 4,
     'mean_los_csect': 1,
-    'num_erlang_stages_csect': 1,
+    'num_erlang_stages_csect': 4,
     'c_sect_prob': 0.00
 }
 
@@ -539,10 +541,10 @@ obunits_dict = {'OBS': {'capacity': 10},
 
 
 
-obunits_list = [{'name': 'OBS', 'capacity': 10},
-                {'name': 'LDR', 'capacity': 6},
-                {'name': 'CSECT', 'capacity': 6},
-                {'name': 'PP', 'capacity': 24}]
+obunits_list = [{'name': 'OBS', 'capacity': 100},
+                {'name': 'LDR', 'capacity': 100},
+                {'name': 'CSECT', 'capacity': 100},
+                {'name': 'PP', 'capacity': 100}]
 
 
 # Create an OB System
@@ -572,7 +574,7 @@ router = OBStaticRouter(env, obsystem, routes, rg['los'])
 obpat_gen = OBPatientGenerator(env, obsystem, router, global_vars['arrival_rate'], rg['arrivals'])
 
 # Run the simulation for a while
-runtime = 1000
+runtime = 10000
 env.run(until=runtime)
 
 # Patient generator stats
