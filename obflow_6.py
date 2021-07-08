@@ -47,8 +47,8 @@ class OBsystem(object):
         self.env = env
 
         # Create individual patient care units
-        enter = EnterFlow()
-        exit = ExitFlow()
+        enter = EnterFlow(self.env, 'Entry')
+        exit = ExitFlow(self.env, 'Exit')
         self.obunits = [enter]
         # Unit index in obunits list should correspond to Unit enum value
         for unit in obunits:
@@ -62,8 +62,8 @@ class OBsystem(object):
 
         # Create lists to hold occupancy tuples (time, occ)
         self.occupancy_lists = {}
-        for unit_name in obunits:
-            self.occupancy_lists[unit_name] = [(0.0, 0.0)]
+        for unit in obunits:
+            self.occupancy_lists[unit['name']] = [(0.0, 0.0)]
 
 
 class PatientType(IntEnum):
@@ -124,7 +124,7 @@ class OBunit(object):
 
         """
 
-        logger.debug(f"{obpatient.name,} trying to get {self.name} at {self.env.now:.4f}")
+        logger.debug(f"{obpatient.name} trying to get {self.name} at {self.env.now:.4f}")
 
         # Increments patient's attribute number of units visited
         obpatient.current_stay_num += 1
@@ -141,9 +141,9 @@ class OBunit(object):
 
         # Seized a bed.
         obpatient.entry_ts[obpatient.current_stay_num] = self.env.now
-        obpatient.previous_unit = obpatient.current_unit
-        obpatient.current_unit = obpatient.next_unit
-        obpatient.next_unit = None
+        obpatient.previous_unit_id = obpatient.current_unit_id
+        obpatient.current_unit_id = obpatient.next_unit_id
+        obpatient.next_unit_id = None
 
         # Check if we have a bed from a previous stay and release it.
         # Update stats for previous unit.
@@ -151,35 +151,33 @@ class OBunit(object):
         if obpatient.bed_requests[obpatient.current_stay_num - 1] is not None:
             previous_request = obpatient.bed_requests[obpatient.current_stay_num - 1]
 
-            previous_unit = obsystem.obunits[obpatient.previous_unit]
+            previous_unit = obsystem.obunits[obpatient.previous_unit_id]
             previous_unit.unit.release(previous_request)
             previous_unit.num_exits += 1
             previous_unit.tot_occ_time += \
                 self.env.now - obpatient.entry_ts[obpatient.current_stay_num - 1]
             obpatient.exit_ts[obpatient.current_stay_num - 1] = self.env.now
 
-        logger.debug(f"{obpatient.name,} entering {self.name} at {self.env.now:.4f}")
+        logger.debug(f"{obpatient.name} entering {self.name} at {self.env.now:.4f}")
 
         self.num_entries += 1
         logger.debug(f"{obpatient.name} waited {self.env.now - bed_request_ts:.4f} time units for {self.name} bed")
 
         # Determine los and then yield for the stay
-        los = obpatient.route_graph.nodes[obpatient.current_unit].planned_los
+        los = obpatient.route_graph.nodes(data=True)[obpatient.current_unit_id]['planned_los']
         yield self.env.timeout(los)
 
         # Go to next destination (which could be an exitflow)
-        obpatient.next_unit = obpatient.route_graph.adj[obpatient.current_unit]
+        next_unit_id = obpatient.router.get_next_unit_id(obpatient)
+        obpatient.next_unit_id = next_unit_id
 
-        if obpatient.next_unit == Unit.EXIT:
+        if obpatient.next_unit_id == Unit.EXIT:
             # For ExitFlow object, no process needed
-            self.env.process(obsystem.obunits[obpatient.next_unit].put(obpatient, obsystem))
+            obsystem.obunits[obpatient.next_unit_id].put(obpatient, obsystem)
         else:
             # Process for putting patient into next bed
-            self.env.process(obsystem.obunits[obpatient.next_unit].put(obpatient, obsystem))
+            self.env.process(obsystem.obunits[obpatient.next_unit_id].put(obpatient, obsystem))
 
-    # def get(self, unit):
-    #     """ Release """
-    #     return unit.get()
 
     def basic_stats_msg(self):
         """ Compute entries, exits, avg los and create summary message.
@@ -210,6 +208,7 @@ class EnterFlow(object):
         self.name = name
 
         self.num_entries = 0
+        self.num_exits = 0
         self.last_entry = None
 
     def put(self, obpatient, obsystem):
@@ -217,14 +216,16 @@ class EnterFlow(object):
         self.last_entry = self.env.now
         self.num_entries += 1
 
-        logger.debug(f"Patient {obpatient.name} entered system at {self.env.now:.2f}.")
+        logger.debug(f"{obpatient.name} entered system at {self.env.now:.4f}.")
 
-        obpatient.current_unit = 0
-        # Go to first destination
-        obpatient.next_unit = obpatient.route_graph.adj[obpatient.current_unit]
+        obpatient.current_unit_id = Unit.ENTRY
 
-        # Process for putting patient into next bed
-        self.env.process(obpatient.next_unit.put(obpatient, obsystem))
+        # Go to first OB unit destination
+        next_unit_id = obpatient.router.get_next_unit_id(obpatient)
+        obpatient.next_unit_id = next_unit_id
+
+        self.num_exits += 1
+        self.env.process(obsystem.obunits[next_unit_id].put(obpatient, obsystem))
 
 
 
@@ -248,20 +249,26 @@ class ExitFlow(object):
         self.name = name
         self.store_obp = store_obp
         self.debug = debug
+        self.num_entries = 0
         self.num_exits = 0
         self.last_exit = 0.0
 
-    def put(self, obpatient):
+    def put(self, obpatient, obsystem):
+
+        self.num_entries += 1
+        obpatient.previous_unit_id = obpatient.current_unit_id
+        obpatient.current_unit_id = Unit.EXIT
+        obpatient.next_unit_id = None
 
         if obpatient.bed_requests[obpatient.current_stay_num] is not None:
             previous_request = obpatient.bed_requests[obpatient.current_stay_num]
-            previous_unit_name = obpatient.planned_route_stop[obpatient.current_stay_num]
-            previous_unit = obunits[previous_unit_name]
+
+            previous_unit = obsystem.obunits[obpatient.previous_unit_id]
             previous_unit.unit.release(previous_request)
             previous_unit.num_exits += 1
-            previous_unit.tot_occ_time += self.env.now - obpatient.entry_ts[
-                obpatient.current_stay_num]
-            obpatient.exit_ts[obpatient.current_stay_num - 1] = self.env.now
+            previous_unit.tot_occ_time += \
+                self.env.now - obpatient.entry_ts[obpatient.current_stay_num]
+            obpatient.exit_ts[obpatient.current_stay_num] = self.env.now
 
         self.last_exit = self.env.now
         self.num_exits += 1
@@ -307,24 +314,24 @@ class OBPatient(object):
     """
 
     def __init__(self, obsystem, router, arr_time, patient_id, arr_stream_rg):
-        self.obsystem = obsystem,
         self.arr_time = arr_time
         self.patient_id = patient_id
-        self.arr_stream_rg = arr_stream_rg
+        self.router = router
+        self.current_stay_num = 0
 
         # Determine patient type
-        if self.arr_stream_rg.random() > self.obsystem.global_vars['c_sect_prob']:
+        if arr_stream_rg.random() > obsystem.global_vars['c_sect_prob']:
             self.patient_type = PatientType.REG_DELIVERY_UNSCHED
         else:
             self.patient_type = PatientType.CSECT_DELIVERY_UNSCHED
 
         self.name = f'Patient_{patient_id}_{self.patient_type}'
 
-        self.route_graph = router.route_graphs(self.patient_type)
+        self.previous_unit_id = None
+        self.current_unit_id = None
+        self.next_unit_id = None
 
-        self.previous_unit = None
-        self.current_unit = None
-        self.next_unit = None
+        router.create_route(self)
 
 
 
@@ -342,21 +349,19 @@ class OBStaticRouter(object):
 
         self.route_graphs = [None]
 
+        # Create route templates from routes list (of unit numbers)
         for route in routes:
             route_graph = nx.DiGraph()
-            route_graph.add_node(0, planned_los=0.0, actual_los=0.0, blocked_duration=0.0,
-                         name='entry')
-            for unit in route:
-                route_graph.add_node(unit, planned_los=0.0, actual_los=0.0, blocked_duration=0.0,
-                             name=obsystem.obunits[unit]['name'])
 
-                route_graph.add_node(len(obsystem.obunits) - 1, planned_los=0.0, actual_los=0.0, blocked_duration=0.0,
-                                     name='exit')
+            for unit in route:
+                route_graph.add_node(unit, id=unit, planned_los=0.0, actual_los=0.0, blocked_duration=0.0,
+                             name=obsystem.obunits[unit].name)
 
             # Add edges
-            for node in range(len(obsystem.obunits - 1)):
-                route_graph.add_edge(node, node + 1)
+            for stopnum in range(0, len(route) - 1):
+                route_graph.add_edge(route[stopnum], route[stopnum + 1])
 
+            print(route_graph.edges)
             self.route_graphs.append(route_graph.copy())
 
 
@@ -368,6 +373,7 @@ class OBStaticRouter(object):
 
         # Copy the route
         obpatient.route_graph = self.route_graphs[obpatient.patient_type]
+        obpatient.route_length = len(obpatient.route_graph.nodes)
 
         mean_los_obs = self.obsystem.global_vars['mean_los_obs']
         k_ldr = self.obsystem.global_vars['num_erlang_stages_ldr']
@@ -376,14 +382,12 @@ class OBStaticRouter(object):
         mean_los_pp_noc = self.obsystem.global_vars['mean_los_pp_noc']
         mean_los_pp_c = self.obsystem.global_vars['mean_los_pp_c']
 
-        if self.patient_type == PatientType.REG_DELIVERY_UNSCHED:
-            self.route_length = 3
+        if obpatient.patient_type == PatientType.REG_DELIVERY_UNSCHED:
             obpatient.route_graph.nodes[Unit.OBS]['planned_los'] = self.rg.exponential(mean_los_obs)
             obpatient.route_graph.nodes[Unit.LDR]['planned_los'] = self.rg.gamma(k_ldr, mean_los_ldr)
             obpatient.route_graph.nodes[Unit.PP]['planned_los'] = self.rg.gamma(k_pp, mean_los_pp_noc)
 
-        elif self.patient_type == PatientType.CSECT_DELIVERY_UNSCHED:
-            self.route_length = 4
+        elif obpatient.patient_type == PatientType.CSECT_DELIVERY_UNSCHED:
             k_csect = self.obsystem.global_vars['num_erlang_stages_csect']
             mean_los_csect = self.obsystem.global_vars['mean_los_csect']
 
@@ -393,12 +397,23 @@ class OBStaticRouter(object):
             obpatient.route_graph.nodes[Unit.PP]['planned_los'] = self.rg.gamma(k_pp, mean_los_pp_c)
 
         # Since we have fixed route, just initialize full list to hold bed requests
-        obpatient.bed_requests = [None for _ in range(obpatient.route_length + 1)]
-        obpatient.request_entry_ts = [None for _ in range(obpatient.route_length + 1)]
-        obpatient.entry_ts = [None for _ in range(obpatient.route_length + 1)]
-        obpatient.exit_ts = [None for _ in range(obpatient.route_length + 1)]
+        obpatient.bed_requests = [None for _ in range(obpatient.route_length)]
+        obpatient.request_entry_ts = [None for _ in range(obpatient.route_length)]
+        obpatient.entry_ts = [None for _ in range(obpatient.route_length)]
+        obpatient.exit_ts = [None for _ in range(obpatient.route_length)]
 
+    def get_next_unit_id(self, obpatient):
 
+        G = obpatient.route_graph
+        next_unit_id = \
+            [G.nodes(data='id')[n] for n in G.successors(obpatient.current_unit_id)][0]
+
+        if next_unit_id is None:
+            logger.debug(f"{obpatient.name} has no next unit at {obpatient.current_unit_id}.")
+            exit(1)
+
+        print(f"{obpatient.name} current_unit_id {obpatient.current_unit_id}, next_unit_id {next_unit_id}")
+        return next_unit_id
 
 
 class OBPatientGenerator(object):
@@ -428,23 +443,19 @@ class OBPatientGenerator(object):
 
     """
 
-    def __init__(self, env, obsystem, router, arr_rate,
+    def __init__(self, env, obsystem, router, arr_rate, arr_stream_rg,
                  initial_delay=0,
                  stoptime=simpy.core.Infinity,
-                 max_arrivals=simpy.core.Infinity, arr_stream_rg=None, seed=None):
+                 max_arrivals=simpy.core.Infinity):
 
-        self.obsystem = obsystem,
-        self.router = router,
+        self.obsystem = obsystem
+        self.router = router
         self.env = env
         self.arr_rate = arr_rate
+        self.arr_stream_rg = arr_stream_rg
         self.initial_delay = initial_delay
         self.stoptime = stoptime
         self.max_arrivals = max_arrivals
-
-        if arr_stream_rg is None:
-            self.arr_stream_rg = default_rng(seed)
-        else:
-            self.arr_stream_rg = arr_stream_rg
 
         # Register the run() method as a SimPy process
         env.process(self.run())
@@ -469,11 +480,11 @@ class OBPatientGenerator(object):
             obpatient = OBPatient(self.obsystem, self.router, self.env.now,
                                   self.num_patients_created, self.arr_stream_rg)
 
-            logger.debug(f"Patient {obpatient.name} created at {self.env.now:.2f}.")
+            logger.debug(f"Patient {obpatient.name} created at {self.env.now:.4f}.")
 
-            # Initiate process of patient entering system
-            next_unit = obpatient.route_graph.nodes[0]
-            self.env.process(self.obsystem.obunits[next_unit].put(obpatient, self.obsystem))
+            # Initiate process of patient entering system - NOT a Simpy process
+            # Just using the put() pattern to be consistent using true Simpy resources
+            self.obsystem.obunits[0].put(obpatient, self.obsystem)
 
 
 
@@ -505,29 +516,30 @@ global_vars = {
     'arrival_rate': 0.4,
     'mean_los_obs': 3.0,
     'mean_los_ldr': 12.0,
-    'num_erlang_stages_ldr': 4,
+    'num_erlang_stages_ldr': 1,
     'mean_los_pp_c': 72.0,
     'mean_los_pp_noc': 48.0,
-    'num_erlang_stages_pp': 4,
+    'num_erlang_stages_pp': 1,
     'mean_los_csect': 1,
-    'num_erlang_stages_csect': 4,
-    'c_sect_prob': 0.15
+    'num_erlang_stages_csect': 1,
+    'c_sect_prob': 0.00
 }
 
-random_number_seeds = {
-    'arrivals': 27
+random_number_streams = {
+    'arrivals': 27,
+    'los': 19
 }
 
 # Units - this spec should be read from a YAML or JSON input file
 
-obunits_dict = {'OBS': {'capacity': 2},
+obunits_dict = {'OBS': {'capacity': 10},
                 'LDR': {'capacity': 6},
                 'CSECT': {'capacity': 6},
                 'PP': {'capacity': 24}}
 
 
 
-obunits_list = [{'name': 'OBS', 'capacity': 2},
+obunits_list = [{'name': 'OBS', 'capacity': 10},
                 {'name': 'LDR', 'capacity': 6},
                 {'name': 'CSECT', 'capacity': 6},
                 {'name': 'PP', 'capacity': 24}]
@@ -545,14 +557,19 @@ rho_pp = global_vars['arrival_rate'] * mean_los_pp / obunits_list[3]['capacity']
 
 print(f"rho_obs: {rho_obs:6.3f}\nrho_ldr: {rho_ldr:6.3f}\nrho_pp: {rho_pp:6.3f}")
 
-# Create a patient generator
-obpat_gen = OBPatientGenerator(env, global_vars['arrival_rate'], seed=random_number_seeds['arrivals'])
+# Create random number generators
+rg = {}
+for stream in random_number_streams:
+    rg[stream] = default_rng(random_number_streams[stream])
 
 # Create a router
-route_1_units = [Unit.OBS, Unit.LDR, Unit.PP]
-route_2_units = [Unit.OBS, Unit.LDR, Unit.CSECT, Unit.PP]
+route_1_units = [Unit.ENTRY, Unit.OBS, Unit.LDR, Unit.PP, Unit.EXIT]
+route_2_units = [Unit.ENTRY, Unit.OBS, Unit.LDR, Unit.CSECT, Unit.PP, Unit.EXIT]
 routes = [route_1_units, route_2_units]
-router = OBStaticRouter(env, obsystem, routes, obpat_gen.arr_stream_rg)
+router = OBStaticRouter(env, obsystem, routes, rg['los'])
+
+# Create a patient generator
+obpat_gen = OBPatientGenerator(env, obsystem, router, global_vars['arrival_rate'], rg['arrivals'])
 
 # Run the simulation for a while
 runtime = 1000
@@ -562,7 +579,7 @@ env.run(until=runtime)
 print("\nNum patients generated: {}\n".format(obpat_gen.num_patients_created))
 
 # Unit stats
-for unit in obsystem.obunits:
+for unit in obsystem.obunits[1:-1]:
     print(unit.basic_stats_msg())
 
 
