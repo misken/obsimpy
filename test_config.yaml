@@ -1,5 +1,13 @@
+scenario: test1
+
+run_settings:
+  run_time: 200
+  warmup_time: 100
+  num_replications: 5
+
 paths:
   stop_logs: ./logs
+  occ_logs: ./logs
 
 global_vars:
   arrival_rate: 0.4

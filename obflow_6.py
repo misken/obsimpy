@@ -3,6 +3,8 @@ import logging
 from enum import IntEnum
 from copy import deepcopy
 from pathlib import Path
+from datetime import datetime
+import argparse
 
 import simpy
 from numpy.random import default_rng
@@ -206,7 +208,7 @@ class OBunit(object):
 
             obpatient.request_exit_ts[obpatient.current_stop_num] = self.env.now
             obpatient.exit_ts[obpatient.current_stop_num] = self.env.now
-            self.exit_system(obpatient)
+            self.exit_system(obpatient, obsystem)
         else:
             obpatient.next_unit_id = obpatient.router.get_next_unit_id(obpatient)
             self.env.process(obsystem.obunits[obpatient.next_unit_id].put(obpatient, obsystem))
@@ -233,7 +235,7 @@ class OBunit(object):
         new_occ = (self.env.now, prev_occ - decrement)
         self.occupancy_list.append(new_occ)
 
-    def exit_system(self, obpatient):
+    def exit_system(self, obpatient, obsystem):
 
         logger.debug(f"{self.env.now:.4f}:Patient {obpatient.name} exited system at {self.env.now:.2f}.")
 
@@ -328,7 +330,7 @@ class OBPatient(object):
 
 
 class OBStaticRouter(object):
-    def __init__(self, env, locations, routes, rg):
+    def __init__(self, env, obsystem, locations, routes, rg):
         """
 
         Parameters
@@ -611,119 +613,61 @@ def process_command_line():
     """
 
     # Create the parser
-    parser = argparse.ArgumentParser(prog='vaccine_clinic_model4',
-                                     description='Run vaccine clinic simulation')
+    parser = argparse.ArgumentParser(prog='obflow_6',
+                                     description='Run inpatient OB simulation')
 
     # Add arguments
     parser.add_argument(
-        "--config", type=str, default=None,
+        "config", type=str,
         help="Configuration file containing input parameter arguments and values"
     )
 
-    parser.add_argument("--patient_arrival_rate", default=150, help="patients per hour",
-                        type=float)
-
-    parser.add_argument("--num_greeters", default=2, help="number of greeters",
-                        type=int)
-
-    parser.add_argument("--num_reg_staff", default=2, help="number of registration staff",
-                        type=int)
-
-    parser.add_argument("--num_vaccinators", default=15, help="number of vaccinators",
-                        type=int)
-
-    parser.add_argument("--num_schedulers", default=2, help="number of schedulers",
-                        type=int)
-
-    parser.add_argument("--pct_need_second_dose", default=0.5,
-                        help="percent of patients needing 2nd dose (default = 0.5)",
-                        type=float)
-
-    parser.add_argument("--temp_check_time_mean", default=0.25,
-                        help="Mean time (mins) for temperature check (default = 0.25)",
-                        type=float)
-
-    parser.add_argument("--temp_check_time_sd", default=0.05,
-                        help="Standard deviation time (mins) for temperature check (default = 0.05)",
-                        type=float)
-
-    parser.add_argument("--reg_time_mean", default=1.0,
-                        help="Mean time (mins) for registration (default = 1.0)",
-                        type=float)
-
-    parser.add_argument("--vaccinate_time_mean", default=4.0,
-                        help="Mean time (mins) for vaccination (default = 4.0)",
-                        type=float)
-
-    parser.add_argument("--vaccinate_time_sd", default=0.5,
-                        help="Standard deviation time (mins) for vaccination (default = 0.5)",
-                        type=float)
-
-    parser.add_argument("--sched_time_mean", default=1.0,
-                        help="Mean time (mins) for scheduling 2nd dose (default = 1.0)",
-                        type=float)
-
-    parser.add_argument("--sched_time_sd", default=1.0,
-                        help="Standard deviation time (mins) for scheduling 2nd dose (default = 0.1)",
-                        type=float)
-
-    parser.add_argument("--obs_time", default=15.0,
-                        help="Time (minutes) patient waits post-vaccination in observation area (default = 15)",
-                        type=float)
-
-    parser.add_argument("--post_obs_time_mean", default=1.0,
-                        help="Time (minutes) patient waits post OBS_TIME in observation area (default = 1.0)",
-                        type=float)
-
-    parser.add_argument(
-        "--scenario", type=str, default=datetime.now().strftime("%Y.%m.%d.%H.%M."),
-        help="Appended to output filenames."
-    )
-
-    parser.add_argument("--stoptime", default=600, help="time that simulation stops (default = 600)",
-                        type=float)
-
-    parser.add_argument("--num_reps", default=1, help="number of simulation replications (default = 1)",
-                        type=int)
-
-    parser.add_argument("--seed", default=3, help="random number generator seed (default = 3)",
-                        type=int)
-
-    parser.add_argument(
-        "--output_path", type=str, default="", help="location for output file writing")
-
-    parser.add_argument("--quiet", action='store_true',
-                        help="If True, suppresses output messages (default=False")
+    parser.add_argument("--loglevel", default='WARNING',
+                        help="Use valid values for logging package")
 
     # do the parsing
     args = parser.parse_args()
 
-    if args.config is not None:
-        # Read inputs from config file
-        with open(args.config, "r") as fin:
-            args = parser.parse_args(fin.read().split())
+    # Read inputs from config file
+    with open(args.config, 'rt') as yamlfile:
+        config = yaml.safe_load(yamlfile)
 
-    return args
+    return config, args.loglevel
 
-def compute_occ_stats(obsystem, end_time, warmup=0, quantiles=[0.5, 0.75, 0.95, 0.99]):
+
+def compute_occ_stats(obsystem, end_time, egress=False, log_path=None, warmup=0, quantiles=[0.5, 0.75, 0.95, 0.99]):
 
     occ_stats = {}
+    occ_dfs = []
     for unit in obsystem.obunits:
         occ = unit.occupancy_list
+
         df = pd.DataFrame(occ, columns=['timestamp', 'occ'])
         df['occ_weight'] = -1 * df['timestamp'].diff(periods=-1)
 
         last_weight = end_time - df.iloc[-1, 0]
         df.fillna(last_weight, inplace=True)
+        df['unit'] = unit.name
+        occ_dfs.append(df)
 
         weighted_stats = DescrStatsW(df['occ'], weights=df['occ_weight'], ddof=0)
 
         occ_stats[unit.name] = {'mean_occ': weighted_stats.mean, 'sd_occ': weighted_stats.std,
                               'quantiles_occ': weighted_stats.quantile(quantiles)}
 
+        if log_path is not None:
+            occ_df = pd.concat(occ_dfs)
+            if egress:
+                occ_df.to_csv(log_path, index=False)
+            else:
+                occ_df[(occ_df['unit'] != 'ENTRY') &
+                             (occ_df['unit'] != 'EXIT')].to_csv(log_path, index=False)
+
+
     return occ_stats
 
-def write_stop_occ_logs(csv_path, obsystem, egress=False):
+
+def write_stop_log(csv_path, obsystem, egress=False):
 
     timestamp_df = pd.DataFrame(obsystem.stops_timestamps_list)
     if egress:
@@ -732,50 +676,114 @@ def write_stop_occ_logs(csv_path, obsystem, egress=False):
         timestamp_df[(timestamp_df['unit'] != 'ENTRY') &
                      (timestamp_df['unit'] != 'EXIT')].to_csv(csv_path, index=False)
 
-    occ_dfs = []
-    for location, occ in obsystem.occupancy_lists.items():
-        df = pd.DataFrame(occ, columns=['timestamp', 'occ'])
-        df['unit'] = location
-        occ_dfs.append(df)
-
-
     if egress:
         timestamp_df.to_csv(csv_path, index=False)
     else:
         timestamp_df[(timestamp_df['unit'] != 'ENTRY') &
                      (timestamp_df['unit'] != 'EXIT')].to_csv(csv_path, index=False)
 
-def main():
-    args = process_command_line()
-    print(args)
 
-    num_reps = args.num_reps
-    scenario = args.scenario
+def output_header(msg, linelen, rep_num):
+    header = f"\n{msg} (rep={rep_num})\n{'-' * linelen}\n"
+    return header
 
-    if len(args.output_path) > 0:
-        output_dir = Path.cwd() / args.output_path
-    else:
-        output_dir = Path.cwd()
 
-    # Main simulation replication loop
-    for i in range(1, num_reps + 1):
-        simulate(vars(args), i)
+def simulate(config, rep_num):
+    """
 
-    # Consolidate the patient logs and compute summary stats
-    patient_log_stats = process_sim_output(output_dir, scenario)
-    print(f"\nScenario: {scenario}")
-    pd.set_option("display.precision", 3)
-    pd.set_option('display.max_columns', None)
-    pd.set_option('display.width', 120)
-    print(patient_log_stats['patient_log_rep_stats'])
-    print(patient_log_stats['patient_log_ci'])
+    Parameters
+    ----------
+    arg_dict : dict whose keys are the input args
+    rep_num : int, simulation replication number
+
+    Returns
+    -------
+    Nothing returned but numerous output files written to ``args_dict[output_path]``
+
+    """
+
+    scenario = config['scenario']
+
+    run_settings = config['run_settings']
+    run_time = run_settings['run_time']
+    warmup_time = run_settings['warmup_time']
+    global_vars = config['global_vars']
+    paths = config['paths']
+    random_number_streams = config['random_number_streams']
+    locations = config['locations']
+    routes = config['routes']
+
+    stop_log_path = Path(paths['stop_logs']) / f"unit_stop_log_{scenario}_r{rep_num}.csv"
+    occ_log_path = Path(paths['occ_logs']) / f"unit_occ_log_{scenario}_r{rep_num}.csv"
+
+    # Initialize a simulation environment
+    env = simpy.Environment()
+
+    # Create an OB System
+    obsystem = OBsystem(env, locations, global_vars)
+
+    # Create random number generators
+    rg = {}
+    for stream, seed in random_number_streams.items():
+        rg[stream] = default_rng(seed + rep_num - 1)
+
+    # Create router
+    router = OBStaticRouter(env, obsystem, locations, routes, rg['los'])
+
+    # Create patient generator
+    obpat_gen = OBPatientGenerator(env, obsystem, router, global_vars['arrival_rate'],
+                                   rg['arrivals'], max_arrivals=10000)
+
+    # Run the simulation replication
+    env.run(until=run_time)
+
+    # Compute and display traffic intensities
+    header = output_header("Input traffic parameters", 50, rep_num)
+    print(header)
+
+    rho_obs = global_vars['arrival_rate'] * global_vars['mean_los_obs'] / locations[Unit.OBS]['capacity']
+    rho_ldr = global_vars['arrival_rate'] * global_vars['mean_los_ldr'] / locations[Unit.LDR]['capacity']
+    mean_los_pp = global_vars['mean_los_pp_c'] * global_vars['c_sect_prob'] + \
+        global_vars['mean_los_pp_noc'] * (1 - global_vars['c_sect_prob'])
+    rho_pp = global_vars['arrival_rate'] * mean_los_pp / locations[Unit.PP]['capacity']
+
+    print(f"rho_obs: {rho_obs:6.3f}\nrho_ldr: {rho_ldr:6.3f}\nrho_pp: {rho_pp:6.3f}")
+
+    # Patient generator stats
+    header = output_header("Patient generator and entry/exit stats", 50, rep_num)
+    print(header)
+    print("Num patients generated: {}\n".format(obpat_gen.num_patients_created))
+
+    # Unit stats
+    for unit in obsystem.obunits[1:-1]:
+        print(unit.basic_stats_msg())
+
+    # System exit stats
+    print("\nNum patients exiting system: {}".format(obsystem.obunits[Unit.EXIT].num_exits))
+    print("Last exit at: {:.2f}\n".format(obsystem.obunits[Unit.EXIT].last_exit))
+
+    # Create output files
+    write_stop_log(stop_log_path, obsystem)
+
+    occ_stats = compute_occ_stats(obsystem, run_time,
+                                  log_path=occ_log_path,
+                                  warmup=0, quantiles=[0.5, 0.75, 0.95, 0.99])
+
+    header = output_header("Occupancy stats", 50, rep_num)
+    print(header)
+    print(occ_stats)
+
+    header = output_header("Output logs", 50, rep_num)
+    print(header)
+    print(f"Stop log written to {stop_log_path}")
+    print(f"Occupancy log written to {occ_log_path}")
 
 
 if __name__ == '__main__':
 
     # Main program
 
-    loglevel = 'WARNING' # TODO - from file or input arg
+    config, loglevel = process_command_line()
 
     numeric_level = getattr(logging, loglevel.upper(), None)
     if not isinstance(numeric_level, int):
@@ -789,99 +797,17 @@ if __name__ == '__main__':
 
     logger = logging.getLogger(__name__)
 
-    # TODO: The following will be generalized for mulitple scenarios and reps
-    scenario = 1
-    replication = 1
-    with open('test_config.yaml', 'rt') as yamlfile:
-        inputs = yaml.safe_load(yamlfile)
+    num_replications = config['run_settings']['num_replications']
 
-    global_vars = inputs['global_vars']
-    paths = inputs['paths']
-    random_number_streams = inputs['random_number_streams']
-    locations = inputs['locations']
-    routes = inputs['routes']
+    # Main simulation replication loop
+    for i in range(1, num_replications + 1):
+        simulate(config, i)
 
-    stop_log_path = Path(paths['stop_logs']) / f"unit_stop_log_s{scenario}_r{replication}.csv"
-
-    # Initialize a simulation environment
-    env = simpy.Environment()
-
-
-    # global_vars = {
-    #     'arrival_rate': 0.4,
-    #     'mean_los_obs': 3.0,
-    #     'num_erlang_stages_obs': 4,
-    #     'mean_los_ldr': 12.0,
-    #     'num_erlang_stages_ldr': 4,
-    #     'mean_los_pp_c': 72.0,
-    #     'mean_los_pp_noc': 48.0,
-    #     'num_erlang_stages_pp': 4,
-    #     'mean_los_csect': 1,
-    #     'num_erlang_stages_csect': 4,
-    #     'c_sect_prob': 0.00
-    # }
-
-    # random_number_streams = {
-    #     'arrivals': 27,
-    #     'los': 19
-    # }
-
-    # Units - this spec should be read from a YAML or JSON input file
-
-    # obunits_list = [{'name': 'OBS', 'capacity': 100},
-    #                 {'name': 'LDR', 'capacity': 100},
-    #                 {'name': 'CSECT', 'capacity': 100},
-    #                 {'name': 'PP', 'capacity': 100}]
-
-
-    # Create an OB System
-    obsystem = OBsystem(env, locations, global_vars)
-
-    # Compute and display traffic intensities
-    rho_obs = global_vars['arrival_rate'] * global_vars['mean_los_obs'] / locations[Unit.OBS]['capacity']
-    rho_ldr = global_vars['arrival_rate'] * global_vars['mean_los_ldr'] / locations[Unit.LDR]['capacity']
-    mean_los_pp = global_vars['mean_los_pp_c'] * global_vars['c_sect_prob'] + \
-        global_vars['mean_los_pp_noc'] * (1 - global_vars['c_sect_prob'])
-    rho_pp = global_vars['arrival_rate'] * mean_los_pp / locations[Unit.PP]['capacity']
-
-    print(f"rho_obs: {rho_obs:6.3f}\nrho_ldr: {rho_ldr:6.3f}\nrho_pp: {rho_pp:6.3f}")
-
-    # Create random number generators
-    rg = {}
-    for stream in random_number_streams:
-        rg[stream] = default_rng(random_number_streams[stream])
-
-    # Create a router - hard coded lists for now (TODO - read in from file or input arg)
-    # route_1_units = [Unit.ENTRY, Unit.OBS, Unit.LDR, Unit.PP, Unit.EXIT]
-    # route_2_units = [Unit.ENTRY, Unit.OBS, Unit.LDR, Unit.CSECT, Unit.PP, Unit.EXIT]
-    # routes = [route_1_units, route_2_units]
-    router = OBStaticRouter(env, locations, routes, rg['los'])
-
-    # Create a patient generator
-    obpat_gen = OBPatientGenerator(env, obsystem, router, global_vars['arrival_rate'],
-                                   rg['arrivals'], max_arrivals=10000)
-
-    # Run the simulation for a while (TODO - read in from file or input arg)
-    runtime = 1000
-    env.run(until=runtime)
-
-    # for ts_list in obsystem.stops_timestamps_list:
-    #     print(ts_list)
-
-    # Patient generator stats
-    print("\nNum patients generated: {}\n".format(obpat_gen.num_patients_created))
-
-    # Unit stats
-    for unit in obsystem.obunits[1:-1]:
-        print(unit.basic_stats_msg())
-
-    # System exit stats
-
-    print("\nNum patients exiting system: {}\n".format(obsystem.obunits[Unit.EXIT].num_exits))
-    print("Last exit at: {:.2f}\n".format(obsystem.obunits[Unit.EXIT].last_exit))
-
-    #write_stop_log(stop_log_path, obsystem)
-
-    occ_stats = compute_occ_stats(obsystem, runtime, warmup=0, quantiles=[0.5, 0.75, 0.95, 0.99])
-    print(occ_stats)
-
+    # Consolidate the patient logs and compute summary stats
+    # patient_log_stats = process_sim_output(output_dir, scenario)
+    # print(f"\nScenario: {scenario}")
+    # pd.set_option("display.precision", 3)
+    # pd.set_option('display.max_columns', None)
+    # pd.set_option('display.width', 120)
+    # print(patient_log_stats['patient_log_rep_stats'])
+    # print(patient_log_stats['patient_log_ci'])
