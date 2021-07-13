@@ -12,7 +12,7 @@ global_vars:
   num_erlang_stages_pp: 4
   mean_los_csect: 1
   num_erlang_stages_csect: 4
-  c_sect_prob: 0.00
+  c_sect_prob: 0.15
 
 random_number_streams:
   arrivals: 27
@@ -26,11 +26,11 @@ locations:
   1:
     id: 1
     name: OBS
-    capacity: 1000
+    capacity: 10
   2:
     id: 2
     name: LDR
-    capacity: 1000
+    capacity: 15
   3:
     id: 3
     name: CSECT
@@ -38,7 +38,7 @@ locations:
   4:
     id: 4
     name: PP
-    capacity: 1000
+    capacity: 35
   5:
     id: 5
     name: EXIT

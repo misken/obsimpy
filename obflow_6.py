@@ -9,6 +9,7 @@ from numpy.random import default_rng
 import networkx as nx
 import pandas as pd
 import yaml
+from statsmodels.stats.weightstats import DescrStatsW
 
 
 """
@@ -66,15 +67,10 @@ class OBsystem(object):
         self.global_vars = global_vars
 
         # Create list to hold timestamps dictionaries (one per patient stop)
-        self.stop_timestamps_list = []
+        self.patient_timestamps_list = []
 
         # Create list to hold timestamps dictionaries (one per patient)
         self.stops_timestamps_list = []
-
-        # Create lists to hold occupancy tuples (sim time, occ)
-        self.occupancy_lists = {}
-        for location in locations:
-            self.occupancy_lists[locations[location]['name']] = [(0.0, 0.0)]
 
 
 class PatientType(IntEnum):
@@ -121,6 +117,9 @@ class OBunit(object):
         self.last_entry = None
         self.last_exit = None
 
+        # Create list to hold occupancy tuples (time, occ)
+        self.occupancy_list = [(0.0, 0.0)]
+
     def put(self, obpatient, obsystem):
         """ A process method called when a bed is requested in the unit.
 
@@ -162,6 +161,9 @@ class OBunit(object):
         self.num_entries += 1
         self.last_entry = self.env.now
 
+        # Increment occupancy
+        self.inc_occ()
+
         # Check if we have a bed from a previous stay and release it if we do.
         # Update stats for previous unit.
 
@@ -174,6 +176,8 @@ class OBunit(object):
                 self.env.now - obpatient.entry_ts[obpatient.current_stop_num - 1]
             previous_unit.num_exits += 1
             previous_unit.last_exit = self.env.now
+            # Decrement occupancy
+            previous_unit.dec_occ()
 
             obpatient.request_exit_ts[obpatient.current_stop_num - 1] = self.env.now
             obpatient.request_entry_ts[obpatient.current_stop_num] = self.env.now
@@ -197,6 +201,8 @@ class OBunit(object):
                 self.env.now - obpatient.entry_ts[obpatient.current_stop_num]
             previous_unit.num_exits += 1
             previous_unit.last_exit = self.env.now
+            # Decrement occupancy
+            previous_unit.dec_occ()
 
             obpatient.request_exit_ts[obpatient.current_stop_num] = self.env.now
             obpatient.exit_ts[obpatient.current_stop_num] = self.env.now
@@ -213,6 +219,20 @@ class OBunit(object):
         #     # Process for putting patient into next bed
         #     self.env.process(obsystem.obunits[obpatient.next_unit_id].put(obpatient, obsystem))
 
+    def inc_occ(self, increment=1):
+
+        # Update vac occupancy - increment by 1
+        prev_occ = self.occupancy_list[-1][1]
+        new_occ = (self.env.now, prev_occ + increment)
+        self.occupancy_list.append(new_occ)
+
+    def dec_occ(self, decrement=1):
+
+        # Update vac occupancy - increment by 1
+        prev_occ = self.occupancy_list[-1][1]
+        new_occ = (self.env.now, prev_occ - decrement)
+        self.occupancy_list.append(new_occ)
+
     def exit_system(self, obpatient):
 
         logger.debug(f"{self.env.now:.4f}:Patient {obpatient.name} exited system at {self.env.now:.2f}.")
@@ -222,14 +242,14 @@ class OBunit(object):
             if obpatient.unit_stops[stop] is not None:
                 timestamps = {'patient_id': obpatient.patient_id,
                               'patient_type': obpatient.patient_type.value,
-                              'unit': obpatient.unit_stops[stop],
+                              'unit': Unit(obpatient.unit_stops[stop]).name,
                               'request_entry_ts': obpatient.request_entry_ts[stop],
                               'entry_ts': obpatient.entry_ts[stop],
                               'request_exit_ts': obpatient.request_exit_ts[stop],
                               'exit_ts': obpatient.exit_ts[stop],
                               'planned_los': obpatient.planned_los[stop]}
 
-                obsystem.stop_timestamps_list.append(timestamps)
+                obsystem.stops_timestamps_list.append(timestamps)
 
 
     def basic_stats_msg(self):
@@ -250,133 +270,6 @@ class OBunit(object):
         msg = "{:6}:\t Entries={}, Exits={}, Occ={}, ALOS={:4.2f}".\
             format(self.name, self.num_entries, self.num_exits,
                    self.unit.count, alos)
-        return msg
-
-
-class EnterFlow(object):
-    """Patients routed here upon creation"""
-
-    def __init__(self, env, name):
-        self.env = env
-        self.name = name
-
-        self.num_entries = 0
-        self.num_exits = 0
-        self.last_entry = None
-
-    def put(self, obpatient, obsystem):
-
-        self.last_entry = self.env.now
-        self.num_entries += 1
-
-        logger.debug(f"{self.env.now:.4f}:{obpatient.name} entered system at {self.env.now:.4f}.")
-
-        obpatient.current_unit_id = Unit.ENTRY
-
-        # Go to first OB unit destination
-        obpatient.next_unit_id = obpatient.router.get_next_unit_id(obpatient)
-
-        self.env.process(obsystem.obunits[obpatient.next_unit_id].put(obpatient, obsystem))
-
-    def basic_stats_msg(self):
-        """ Create summary message with basic stats on exits.
-
-
-        Returns
-        -------
-        str
-            Message with basic stats
-        """
-
-        msg = "{:6}:\t Entries={}, Last Entry={:10.2f}".format(self.name,
-                                                            self.num_entries,
-                                                            self.last_entry)
-
-        return msg
-
-class ExitFlow(object):
-    """ Patients routed here when ready to exit.
-
-        Patient objects put into a Store. Can be accessed later for stats
-        and logs. A little worried about how big the Store will get.
-
-        Parameters
-        ----------
-        env : simpy.Environment
-            the simulation environment
-        debug : boolean
-            if true then patient details printed on arrival
-    """
-
-    def __init__(self, env, name, store_obp=False):
-        self.store = simpy.Store(env)
-        self.env = env
-        self.name = name
-        self.store_obp = store_obp
-
-        self.num_entries = 0
-        self.num_exits = 0
-        self.last_exit = 0.0
-
-    def put(self, obpatient, obsystem):
-
-        # The following are immediately updateable since no resource needed
-        self.num_entries += 1
-        obpatient.current_stop_num += 1
-
-        # Update previous, current, next unit ids
-        obpatient.previous_unit_id = obpatient.current_unit_id
-        obpatient.current_unit_id = Unit.EXIT
-        obpatient.next_unit_id = None
-
-        # Check if we have a bed from a previous stay and release it if we do.
-        # Update stats for previous unit.
-
-        previous_unit = obsystem.obunits[obpatient.previous_unit_id]
-        previous_unit.num_exits += 1
-
-        if obpatient.bed_requests[obpatient.current_stop_num - 1] is not None:
-            previous_request = obpatient.bed_requests[obpatient.current_stop_num - 1]
-            previous_unit.unit.release(previous_request)
-            previous_unit.tot_occ_time += \
-                self.env.now - obpatient.entry_ts[obpatient.current_stop_num - 1]
-            obpatient.request_exit_ts[obpatient.current_stop_num - 1] = self.env.now
-            obpatient.exit_ts[obpatient.current_stop_num - 1] = self.env.now
-
-        # Update stats for this EXIT unit
-        self.last_exit = self.env.now
-        self.num_exits += 1
-
-        logger.debug(f"{self.env.now:.4f}:Patient {obpatient.name} exited system at {self.env.now:.2f}.")
-
-        # Create dictionaries of timestamps for patient_stop log
-        for stop in range(len(obpatient.unit_stops)):
-            if obpatient.unit_stops[stop] is not None:
-                timestamps = {'patient_id': obpatient.patient_id,
-                              'patient_type': obpatient.patient_type.value,
-                              'unit': obpatient.unit_stops[stop],
-                              'request_entry_ts': obpatient.request_entry_ts[stop],
-                              'entry_ts': obpatient.entry_ts[stop],
-                              'request_exit_ts': obpatient.request_exit_ts[stop],
-                              'exit_ts': obpatient.exit_ts[stop],
-                              'planned_los': obpatient.planned_los[stop]}
-
-                obsystem.stop_timestamps_list.append(timestamps)
-
-    def basic_stats_msg(self):
-        """ Create summary message with basic stats on exits.
-
-
-        Returns
-        -------
-        str
-            Message with basic stats
-        """
-
-        msg = "{:6}:\t Exits={}, Last Exit={:10.2f}".format(self.name,
-                                                            self.num_exits,
-                                                            self.last_exit)
-
         return msg
 
 
@@ -812,6 +705,45 @@ def process_command_line():
 
     return args
 
+def compute_occ_stats(obsystem, end_time, warmup=0, quantiles=[0.5, 0.75, 0.95, 0.99]):
+
+    occ_stats = {}
+    for unit in obsystem.obunits:
+        occ = unit.occupancy_list
+        df = pd.DataFrame(occ, columns=['timestamp', 'occ'])
+        df['occ_weight'] = -1 * df['timestamp'].diff(periods=-1)
+
+        last_weight = end_time - df.iloc[-1, 0]
+        df.fillna(last_weight, inplace=True)
+
+        weighted_stats = DescrStatsW(df['occ'], weights=df['occ_weight'], ddof=0)
+
+        occ_stats[unit.name] = {'mean_occ': weighted_stats.mean, 'sd_occ': weighted_stats.std,
+                              'quantiles_occ': weighted_stats.quantile(quantiles)}
+
+    return occ_stats
+
+def write_stop_occ_logs(csv_path, obsystem, egress=False):
+
+    timestamp_df = pd.DataFrame(obsystem.stops_timestamps_list)
+    if egress:
+        timestamp_df.to_csv(csv_path, index=False)
+    else:
+        timestamp_df[(timestamp_df['unit'] != 'ENTRY') &
+                     (timestamp_df['unit'] != 'EXIT')].to_csv(csv_path, index=False)
+
+    occ_dfs = []
+    for location, occ in obsystem.occupancy_lists.items():
+        df = pd.DataFrame(occ, columns=['timestamp', 'occ'])
+        df['unit'] = location
+        occ_dfs.append(df)
+
+
+    if egress:
+        timestamp_df.to_csv(csv_path, index=False)
+    else:
+        timestamp_df[(timestamp_df['unit'] != 'ENTRY') &
+                     (timestamp_df['unit'] != 'EXIT')].to_csv(csv_path, index=False)
 
 def main():
     args = process_command_line()
@@ -843,7 +775,7 @@ if __name__ == '__main__':
 
     # Main program
 
-    loglevel = 'DEBUG' # TODO - from file or input arg
+    loglevel = 'WARNING' # TODO - from file or input arg
 
     numeric_level = getattr(logging, loglevel.upper(), None)
     if not isinstance(numeric_level, int):
@@ -857,14 +789,19 @@ if __name__ == '__main__':
 
     logger = logging.getLogger(__name__)
 
+    # TODO: The following will be generalized for mulitple scenarios and reps
+    scenario = 1
+    replication = 1
     with open('test_config.yaml', 'rt') as yamlfile:
         inputs = yaml.safe_load(yamlfile)
 
     global_vars = inputs['global_vars']
+    paths = inputs['paths']
     random_number_streams = inputs['random_number_streams']
     locations = inputs['locations']
     routes = inputs['routes']
 
+    stop_log_path = Path(paths['stop_logs']) / f"unit_stop_log_s{scenario}_r{replication}.csv"
 
     # Initialize a simulation environment
     env = simpy.Environment()
@@ -925,10 +862,10 @@ if __name__ == '__main__':
                                    rg['arrivals'], max_arrivals=10000)
 
     # Run the simulation for a while (TODO - read in from file or input arg)
-    runtime = 10000
+    runtime = 1000
     env.run(until=runtime)
 
-    # for ts_list in obsystem.stop_timestamps_list:
+    # for ts_list in obsystem.stops_timestamps_list:
     #     print(ts_list)
 
     # Patient generator stats
@@ -942,4 +879,9 @@ if __name__ == '__main__':
 
     print("\nNum patients exiting system: {}\n".format(obsystem.obunits[Unit.EXIT].num_exits))
     print("Last exit at: {:.2f}\n".format(obsystem.obunits[Unit.EXIT].last_exit))
+
+    #write_stop_log(stop_log_path, obsystem)
+
+    occ_stats = compute_occ_stats(obsystem, runtime, warmup=0, quantiles=[0.5, 0.75, 0.95, 0.99])
+    print(occ_stats)
 
