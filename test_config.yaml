@@ -1,13 +1,14 @@
 scenario: test1
 
 run_settings:
-  run_time: 200
+  run_time: 2000
   warmup_time: 100
   num_replications: 5
 
 paths:
   stop_logs: ./logs
   occ_logs: ./logs
+  occ_stats: ./stats
 
 global_vars:
   arrival_rate: 0.4

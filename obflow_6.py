@@ -637,7 +637,7 @@ def process_command_line():
 
 def compute_occ_stats(obsystem, end_time, egress=False, log_path=None, warmup=0, quantiles=[0.5, 0.75, 0.95, 0.99]):
 
-    occ_stats = {}
+    occ_stats_dfs = []
     occ_dfs = []
     for unit in obsystem.obunits:
         occ = unit.occupancy_list
@@ -650,21 +650,33 @@ def compute_occ_stats(obsystem, end_time, egress=False, log_path=None, warmup=0,
         df['unit'] = unit.name
         occ_dfs.append(df)
 
+        # Filter out recs before warmup
+        df = df[df['timestamp'] > warmup]
+
         weighted_stats = DescrStatsW(df['occ'], weights=df['occ_weight'], ddof=0)
 
-        occ_stats[unit.name] = {'mean_occ': weighted_stats.mean, 'sd_occ': weighted_stats.std,
-                              'quantiles_occ': weighted_stats.quantile(quantiles)}
+        occ_quantiles = weighted_stats.quantile(quantiles)
+        occ_stats_df = pd.DataFrame([{'unit': unit.name, 'capacity': unit.capacity,
+                                      'mean_occ': weighted_stats.mean, 'sd_occ': weighted_stats.std,
+                                      'min_occ': df['occ'].min(), 'max_occ': df['occ'].max()}])
 
-        if log_path is not None:
-            occ_df = pd.concat(occ_dfs)
-            if egress:
-                occ_df.to_csv(log_path, index=False)
-            else:
-                occ_df[(occ_df['unit'] != 'ENTRY') &
-                             (occ_df['unit'] != 'EXIT')].to_csv(log_path, index=False)
+        quantiles_df = pd.DataFrame(occ_quantiles).transpose()
+        quantiles_df.rename(columns = lambda x: f"p{100 * x:02.0f}occ", inplace=True)
+
+        occ_stats_df = pd.concat([occ_stats_df, quantiles_df], axis=1)
+        occ_stats_dfs.append(occ_stats_df)
 
 
-    return occ_stats
+    if log_path is not None:
+        occ_df = pd.concat(occ_dfs)
+        if egress:
+            occ_df.to_csv(log_path, index=False)
+        else:
+            occ_df[(occ_df['unit'] != 'ENTRY') &
+                         (occ_df['unit'] != 'EXIT')].to_csv(log_path, index=False)
+
+
+    return pd.concat(occ_stats_dfs)
 
 
 def write_stop_log(csv_path, obsystem, egress=False):
@@ -715,6 +727,7 @@ def simulate(config, rep_num):
 
     stop_log_path = Path(paths['stop_logs']) / f"unit_stop_log_{scenario}_r{rep_num}.csv"
     occ_log_path = Path(paths['occ_logs']) / f"unit_occ_log_{scenario}_r{rep_num}.csv"
+    occ_stats_path = Path(paths['occ_stats']) / f"unit_occ_stats_{scenario}_r{rep_num}.csv"
 
     # Initialize a simulation environment
     env = simpy.Environment()
@@ -765,18 +778,20 @@ def simulate(config, rep_num):
     # Create output files
     write_stop_log(stop_log_path, obsystem)
 
-    occ_stats = compute_occ_stats(obsystem, run_time,
+    occ_stats_df = compute_occ_stats(obsystem, run_time,
                                   log_path=occ_log_path,
-                                  warmup=0, quantiles=[0.5, 0.75, 0.95, 0.99])
+                                  warmup=warmup_time, quantiles=[0.5, 0.75, 0.95, 0.99])
 
+    occ_stats_df.to_csv(occ_stats_path, index=False)
     header = output_header("Occupancy stats", 50, rep_num)
     print(header)
-    print(occ_stats)
+    print(occ_stats_df)
 
     header = output_header("Output logs", 50, rep_num)
     print(header)
     print(f"Stop log written to {stop_log_path}")
     print(f"Occupancy log written to {occ_log_path}")
+    print(f"Occupancy stats written to {occ_stats_path}")
 
 
 if __name__ == '__main__':
