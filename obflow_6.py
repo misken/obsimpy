@@ -6,12 +6,15 @@ from pathlib import Path
 from datetime import datetime
 import argparse
 
+import numpy as np
 import simpy
 from numpy.random import default_rng
 import networkx as nx
 import pandas as pd
 import yaml
 from statsmodels.stats.weightstats import DescrStatsW
+
+from process_obsim_logs import process_obsim_logs
 
 
 """
@@ -151,6 +154,10 @@ class OBunit(object):
         obpatient.unit_stops[obpatient.current_stop_num] = self.id
         obpatient.request_entry_ts[obpatient.current_stop_num] = self.env.now
 
+        # If we are coming from upstream unit, we are trying to exit that unit now
+        if obpatient.bed_requests[obpatient.current_stop_num - 1] is not None:
+            obpatient.request_exit_ts[obpatient.current_stop_num - 1] = self.env.now
+
         # Yield until we get a bed
         yield bed_request
 
@@ -158,6 +165,7 @@ class OBunit(object):
         # Increments patient's attribute number of units visited (includes ENTRY and EXIT)
 
         obpatient.entry_ts[obpatient.current_stop_num] = self.env.now
+        obpatient.wait_to_enter = self.env.now - obpatient.request_entry_ts[obpatient.current_stop_num]
         obpatient.current_unit_id = self.id
 
         self.num_entries += 1
@@ -170,6 +178,9 @@ class OBunit(object):
         # Update stats for previous unit.
 
         if obpatient.bed_requests[obpatient.current_stop_num - 1] is not None:
+            obpatient.exit_ts[obpatient.current_stop_num - 1] = self.env.now
+            obpatient.wait_to_exit[obpatient.current_stop_num - 1] = \
+                self.env.now - obpatient.request_exit_ts[obpatient.current_stop_num - 1]
             obpatient.previous_unit_id = obpatient.unit_stops[obpatient.current_stop_num - 1]
             previous_unit = obsystem.obunits[obpatient.previous_unit_id]
             previous_request = obpatient.bed_requests[obpatient.current_stop_num - 1]
@@ -181,9 +192,6 @@ class OBunit(object):
             # Decrement occupancy
             previous_unit.dec_occ()
 
-            obpatient.request_exit_ts[obpatient.current_stop_num - 1] = self.env.now
-            obpatient.request_entry_ts[obpatient.current_stop_num] = self.env.now
-            obpatient.exit_ts[obpatient.current_stop_num - 1] = self.env.now
 
         logger.debug(f"{self.env.now:.4f}:{obpatient.name} entering {self.name} at {self.env.now:.4f}")
         logger.debug(f"{self.env.now:.4f}:{obpatient.name} waited {self.env.now - bed_request_ts:.4f} time units for {self.name} bed")
@@ -191,7 +199,17 @@ class OBunit(object):
         # Retrieve los and then yield for the stay
         los = obpatient.route_graph.nodes(data=True)[obpatient.current_unit_id]['planned_los']
         obpatient.planned_los[obpatient.current_stop_num] = los
-        yield self.env.timeout(los)
+
+        # Do any blocking related los adjustments
+        if self.name == 'LDR':
+            adj_los = max(0, los - obpatient.wait_to_exit[obpatient.current_stop_num - 1])
+        else:
+            adj_los = los
+
+        obpatient.adjusted_los[obpatient.current_stop_num] = adj_los
+
+        # Wait for LOS to elapse
+        yield self.env.timeout(adj_los)
 
         # Go to next destination (which could be an exitflow)
         if obpatient.current_unit_id == Unit.EXIT:
@@ -249,7 +267,17 @@ class OBunit(object):
                               'entry_ts': obpatient.entry_ts[stop],
                               'request_exit_ts': obpatient.request_exit_ts[stop],
                               'exit_ts': obpatient.exit_ts[stop],
-                              'planned_los': obpatient.planned_los[stop]}
+                              'planned_los': obpatient.planned_los[stop],
+                              'adjusted_los': obpatient.adjusted_los[stop],
+                              'entry_tryentry': obpatient.entry_ts[stop] - obpatient.request_entry_ts[stop],
+                              'tryexit_entry': obpatient.request_exit_ts[stop] - obpatient.entry_ts[stop],
+                              'exit_tryexit': obpatient.exit_ts[stop] - obpatient.request_exit_ts[stop],
+                              'exit_enter': obpatient.exit_ts[stop] - obpatient.entry_ts[stop],
+                              'exit_tryenter': obpatient.exit_ts[stop] - obpatient.request_entry_ts[stop],
+                              'wait_to_enter': obpatient.wait_to_enter,
+                              'wait_to_exit': obpatient.wait_to_exit,
+                              'bwaited_to_enter': obpatient.entry_ts[stop] > obpatient.request_entry_ts[stop],
+                              'bwaited_to_exit': obpatient.exit_ts[stop] > obpatient.request_exit_ts[stop]}
 
                 obsystem.stops_timestamps_list.append(timestamps)
 
@@ -303,23 +331,29 @@ class OBPatient(object):
 
         self.name = f'Patient_i{patient_id}_t{self.patient_type}'
 
-        self.current_stop_num = 0
+        self.current_stop_num = -1
         self.previous_unit_id = None
         self.current_unit_id = None
         self.next_unit_id = None
 
         self.route_graph = router.create_route(self.patient_type)
-        self.route_length = len(self.route_graph.nodes) # Includes ENTRY and EXIT
+        self.route_length = len(self.route_graph.edges) + 1 # Includes ENTRY and EXIT
 
         # Since we have fixed route, just initialize full list to hold bed requests
-        # The index numbers are stop numbers and so slot 0 is unused and set to None
-        self.bed_requests = [None for _ in range(self.route_length + 1)]
-        self.unit_stops = [None for _ in range(self.route_length + 1)]
-        self.planned_los = [None for _ in range(self.route_length + 1)]
-        self.request_entry_ts = [None for _ in range(self.route_length + 1)]
-        self.entry_ts = [None for _ in range(self.route_length + 1)]
-        self.request_exit_ts = [None for _ in range(self.route_length + 1)]
-        self.exit_ts = [None for _ in range(self.route_length + 1)]
+        # The index numbers are stop numbers and so slot 0 is for ENTRY location
+        self.bed_requests = [None for _ in range(self.route_length)]
+        self.unit_stops = [None for _ in range(self.route_length)]
+        self.planned_los = [None for _ in range(self.route_length)]
+        self.adjusted_los = [None for _ in range(self.route_length)]
+        self.request_entry_ts = [None for _ in range(self.route_length)]
+        self.entry_ts = [None for _ in range(self.route_length)]
+
+        self.wait_to_enter = [None for _ in range(self.route_length)]
+
+        self.request_exit_ts = [None for _ in range(self.route_length)]
+        self.exit_ts = [None for _ in range(self.route_length)]
+
+        self.wait_to_exit = [None for _ in range(self.route_length)]
 
         self.system_exit_ts = None
 
@@ -489,120 +523,7 @@ class OBPatientGenerator(object):
             self.env.process(self.obsystem.obunits[Unit.ENTRY].put(obpatient, self.obsystem))
 
 
-def simulate(arg_dict, rep_num):
-    """
 
-    Parameters
-    ----------
-    arg_dict : dict whose keys are the input args
-    rep_num : int, simulation replication number
-
-    Returns
-    -------
-    Nothing returned but numerous output files written to ``args_dict[output_path]``
-
-    """
-
-    # Create a random number generator for this replication
-    seed = arg_dict['seed'] + rep_num - 1
-    rg = default_rng(seed=seed)
-
-    # Resource capacity levels
-    num_greeters = arg_dict['num_greeters']
-    num_reg_staff = arg_dict['num_reg_staff']
-    num_vaccinators = arg_dict['num_vaccinators']
-    num_schedulers = arg_dict['num_schedulers']
-
-    # Initialize the patient flow related attributes
-    patient_arrival_rate = arg_dict['patient_arrival_rate']
-    mean_interarrival_time = 1.0 / (patient_arrival_rate / 60.0)
-
-    pct_need_second_dose = arg_dict['pct_need_second_dose']
-    temp_check_time_mean = arg_dict['temp_check_time_mean']
-    temp_check_time_sd = arg_dict['temp_check_time_sd']
-    reg_time_mean = arg_dict['reg_time_mean']
-    vaccinate_time_mean = arg_dict['vaccinate_time_mean']
-    vaccinate_time_sd = arg_dict['vaccinate_time_sd']
-    sched_time_mean = arg_dict['sched_time_mean']
-    sched_time_sd = arg_dict['sched_time_sd']
-    obs_time = arg_dict['obs_time']
-    post_obs_time_mean = arg_dict['post_obs_time_mean']
-
-    # Other parameters
-    stoptime = arg_dict['stoptime']  # No more arrivals after this time
-    quiet = arg_dict['quiet']
-    scenario = arg_dict['scenario']
-
-    # Run the simulation
-    env = simpy.Environment()
-
-    # Create a clinic to simulate
-    clinic = VaccineClinic(env, num_greeters, num_reg_staff, num_vaccinators, num_schedulers,
-                           pct_need_second_dose,
-                           temp_check_time_mean, temp_check_time_sd,
-                           reg_time_mean,
-                           vaccinate_time_mean, vaccinate_time_sd,
-                           sched_time_mean, sched_time_sd,
-                           obs_time, post_obs_time_mean, rg
-                           )
-
-    # Initialize and register (happens in __init__) the patient arrival generators
-    walkin_gen = WalkinPatientGenerator(env, clinic, mean_interarrival_time, stoptime, rg, quiet=quiet)
-    scheduled_gen = ScheduledPatientGenerator(env, clinic, 10.0, 5, stoptime, rg, quiet=quiet)
-
-    # Launch the simulation
-    env.run()
-
-    # Create output files and basic summary stats
-    if len(arg_dict['output_path']) > 0:
-        output_dir = Path.cwd() / arg_dict['output_path']
-    else:
-        output_dir = Path.cwd()
-
-    # Create paths for the output logs
-    clinic_patient_log_path = output_dir / f'clinic_patient_log_{scenario}_{rep_num}.csv'
-    vac_occupancy_df_path = output_dir / f'vac_occupancy_{scenario}_{rep_num}.csv'
-    postvac_occupancy_df_path = output_dir / f'postvac_occupancy_{scenario}_{rep_num}.csv'
-
-    # Create patient log dataframe and add scenario and rep number cols
-    clinic_patient_log_df = pd.DataFrame(clinic.timestamps_list)
-    clinic_patient_log_df['scenario'] = scenario
-    clinic_patient_log_df['rep_num'] = rep_num
-
-    # Reorder cols to get scenario and rep_num first
-    num_cols = len(clinic_patient_log_df.columns)
-    new_col_order = [-2, -1]
-    new_col_order.extend([_ for _ in range(0, num_cols - 2)])
-    clinic_patient_log_df = clinic_patient_log_df.iloc[:, new_col_order]
-
-    # Compute durations of interest for patient log
-    clinic_patient_log_df = compute_durations(clinic_patient_log_df)
-
-    # Create occupancy log dataframes and add scenario and rep number cols
-    vac_occupancy_df = pd.DataFrame(clinic.vac_occupancy_list, columns=['ts', 'occ'])
-    vac_occupancy_df['scenario'] = scenario
-    vac_occupancy_df['rep_num'] = scenario
-    num_cols = len(vac_occupancy_df.columns)
-    new_col_order = [-2, -1]
-    new_col_order.extend([_ for _ in range(0, num_cols - 2)])
-    vac_occupancy_df = vac_occupancy_df.iloc[:, new_col_order]
-
-    postvac_occupancy_df = pd.DataFrame(clinic.postvac_occupancy_list, columns=['ts', 'occ'])
-    postvac_occupancy_df['scenario'] = scenario
-    postvac_occupancy_df['rep_num'] = scenario
-    num_cols = len(postvac_occupancy_df.columns)
-    new_col_order = [-2, -1]
-    new_col_order.extend([_ for _ in range(0, num_cols - 2)])
-    postvac_occupancy_df = postvac_occupancy_df.iloc[:, new_col_order]
-
-    # Export logs to csv
-    clinic_patient_log_df.to_csv(clinic_patient_log_path, index=False)
-    # vac_occupancy_df.to_csv(vac_occupancy_df_path, index=False)
-    # postvac_occupancy_df.to_csv(postvac_occupancy_df_path, index=False)
-
-    # Note simulation end time
-    end_time = env.now
-    print(f"Simulation replication {rep_num} ended at time {end_time}")
 
 def process_command_line():
     """
@@ -635,7 +556,8 @@ def process_command_line():
     return config, args.loglevel
 
 
-def compute_occ_stats(obsystem, end_time, egress=False, log_path=None, warmup=0, quantiles=[0.5, 0.75, 0.95, 0.99]):
+def compute_occ_stats(obsystem, end_time, egress=False, log_path=None, warmup=0,
+                      quantiles=[0.05, 0.25, 0.5, 0.75, 0.95, 0.99]):
 
     occ_stats_dfs = []
     occ_dfs = []
@@ -661,7 +583,7 @@ def compute_occ_stats(obsystem, end_time, egress=False, log_path=None, warmup=0,
                                       'min_occ': df['occ'].min(), 'max_occ': df['occ'].max()}])
 
         quantiles_df = pd.DataFrame(occ_quantiles).transpose()
-        quantiles_df.rename(columns = lambda x: f"p{100 * x:02.0f}occ", inplace=True)
+        quantiles_df.rename(columns = lambda x: f"p{100 * x:02.0f}_occ", inplace=True)
 
         occ_stats_df = pd.concat([occ_stats_df, quantiles_df], axis=1)
         occ_stats_dfs.append(occ_stats_df)
@@ -725,9 +647,9 @@ def simulate(config, rep_num):
     locations = config['locations']
     routes = config['routes']
 
-    stop_log_path = Path(paths['stop_logs']) / f"unit_stop_log_{scenario}_r{rep_num}.csv"
-    occ_log_path = Path(paths['occ_logs']) / f"unit_occ_log_{scenario}_r{rep_num}.csv"
-    occ_stats_path = Path(paths['occ_stats']) / f"unit_occ_stats_{scenario}_r{rep_num}.csv"
+    stop_log_path = Path(paths['stop_logs']) / f"unit_stop_log_scenario_{scenario}_rep_{rep_num}.csv"
+    occ_log_path = Path(paths['occ_logs']) / f"unit_occ_log_scenario_{scenario}_rep_{rep_num}.csv"
+    occ_stats_path = Path(paths['occ_stats']) / f"unit_occ_stats_scenario_{scenario}_rep_{rep_num}.csv"
 
     # Initialize a simulation environment
     env = simpy.Environment()
@@ -780,7 +702,7 @@ def simulate(config, rep_num):
 
     occ_stats_df = compute_occ_stats(obsystem, run_time,
                                   log_path=occ_log_path,
-                                  warmup=warmup_time, quantiles=[0.5, 0.75, 0.95, 0.99])
+                                  warmup=warmup_time, quantiles=[0.05, 0.25, 0.5, 0.75, 0.95, 0.99])
 
     occ_stats_df.to_csv(occ_stats_path, index=False)
     header = output_header("Occupancy stats", 50, rep_num)
@@ -813,10 +735,20 @@ if __name__ == '__main__':
     logger = logging.getLogger(__name__)
 
     num_replications = config['run_settings']['num_replications']
+    run_time = config['run_settings']['run_time']
+    warmup_time = config['run_settings']['warmup_time']
+    paths = config['paths']
+
+    stop_log_path = Path(paths['stop_logs'])
+    occ_log_path = Path(paths['occ_logs'])
+    occ_stats_path = Path(paths['occ_stats'])
+    output_path = Path(paths['output'])
 
     # Main simulation replication loop
     for i in range(1, num_replications + 1):
         simulate(config, i)
+
+    process_obsim_logs(stop_log_path, occ_stats_path, output_path, warmup=warmup_time, run_time=run_time)
 
     # Consolidate the patient logs and compute summary stats
     # patient_log_stats = process_sim_output(output_dir, scenario)
