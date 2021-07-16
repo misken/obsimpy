@@ -165,7 +165,7 @@ class OBunit(object):
         # Increments patient's attribute number of units visited (includes ENTRY and EXIT)
 
         obpatient.entry_ts[obpatient.current_stop_num] = self.env.now
-        obpatient.wait_to_enter = self.env.now - obpatient.request_entry_ts[obpatient.current_stop_num]
+        obpatient.wait_to_enter[obpatient.current_stop_num] = self.env.now - obpatient.request_entry_ts[obpatient.current_stop_num]
         obpatient.current_unit_id = self.id
 
         self.num_entries += 1
@@ -274,8 +274,8 @@ class OBunit(object):
                               'exit_tryexit': obpatient.exit_ts[stop] - obpatient.request_exit_ts[stop],
                               'exit_enter': obpatient.exit_ts[stop] - obpatient.entry_ts[stop],
                               'exit_tryenter': obpatient.exit_ts[stop] - obpatient.request_entry_ts[stop],
-                              'wait_to_enter': obpatient.wait_to_enter,
-                              'wait_to_exit': obpatient.wait_to_exit,
+                              'wait_to_enter': obpatient.wait_to_enter[stop],
+                              'wait_to_exit': obpatient.wait_to_exit[stop],
                               'bwaited_to_enter': obpatient.entry_ts[stop] > obpatient.request_entry_ts[stop],
                               'bwaited_to_exit': obpatient.exit_ts[stop] > obpatient.request_exit_ts[stop]}
 
