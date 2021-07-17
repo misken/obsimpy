@@ -667,7 +667,7 @@ def simulate(config, rep_num):
 
     # Create patient generator
     obpat_gen = OBPatientGenerator(env, obsystem, router, global_vars['arrival_rate'],
-                                   rg['arrivals'], max_arrivals=10000)
+                                   rg['arrivals'], max_arrivals=1000000)
 
     # Run the simulation replication
     env.run(until=run_time)
