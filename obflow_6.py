@@ -617,8 +617,8 @@ def write_stop_log(csv_path, obsystem, egress=False):
                      (timestamp_df['unit'] != 'EXIT')].to_csv(csv_path, index=False)
 
 
-def output_header(msg, linelen, rep_num):
-    header = f"\n{msg} (rep={rep_num})\n{'-' * linelen}\n"
+def output_header(msg, linelen, scenario, rep_num):
+    header = f"\n{msg} (scenario={scenario} rep={rep_num})\n{'-' * linelen}\n"
     return header
 
 
@@ -673,7 +673,7 @@ def simulate(config, rep_num):
     env.run(until=run_time)
 
     # Compute and display traffic intensities
-    header = output_header("Input traffic parameters", 50, rep_num)
+    header = output_header("Input traffic parameters", 50, scenario, rep_num)
     print(header)
 
     rho_obs = global_vars['arrival_rate'] * global_vars['mean_los_obs'] / locations[Unit.OBS]['capacity']
