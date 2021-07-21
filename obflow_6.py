@@ -556,6 +556,29 @@ def process_command_line():
     return config, args.loglevel
 
 
+
+
+
+def write_stop_log(csv_path, obsystem, egress=False):
+
+    timestamp_df = pd.DataFrame(obsystem.stops_timestamps_list)
+    if egress:
+        timestamp_df.to_csv(csv_path, index=False)
+    else:
+        timestamp_df[(timestamp_df['unit'] != 'ENTRY') &
+                     (timestamp_df['unit'] != 'EXIT')].to_csv(csv_path, index=False)
+
+    if egress:
+        timestamp_df.to_csv(csv_path, index=False)
+    else:
+        timestamp_df[(timestamp_df['unit'] != 'ENTRY') &
+                     (timestamp_df['unit'] != 'EXIT')].to_csv(csv_path, index=False)
+
+
+def output_header(msg, linelen, scenario, rep_num):
+    header = f"\n{msg} (scenario={scenario} rep={rep_num})\n{'-' * linelen}\n"
+    return header
+
 def compute_occ_stats(obsystem, end_time, egress=False, log_path=None, warmup=0,
                       quantiles=[0.05, 0.25, 0.5, 0.75, 0.95, 0.99]):
 
@@ -596,30 +619,6 @@ def compute_occ_stats(obsystem, end_time, egress=False, log_path=None, warmup=0,
         else:
             occ_df[(occ_df['unit'] != 'ENTRY') &
                          (occ_df['unit'] != 'EXIT')].to_csv(log_path, index=False)
-
-
-    return pd.concat(occ_stats_dfs)
-
-
-def write_stop_log(csv_path, obsystem, egress=False):
-
-    timestamp_df = pd.DataFrame(obsystem.stops_timestamps_list)
-    if egress:
-        timestamp_df.to_csv(csv_path, index=False)
-    else:
-        timestamp_df[(timestamp_df['unit'] != 'ENTRY') &
-                     (timestamp_df['unit'] != 'EXIT')].to_csv(csv_path, index=False)
-
-    if egress:
-        timestamp_df.to_csv(csv_path, index=False)
-    else:
-        timestamp_df[(timestamp_df['unit'] != 'ENTRY') &
-                     (timestamp_df['unit'] != 'EXIT')].to_csv(csv_path, index=False)
-
-
-def output_header(msg, linelen, scenario, rep_num):
-    header = f"\n{msg} (scenario={scenario} rep={rep_num})\n{'-' * linelen}\n"
-    return header
 
 
 def simulate(config, rep_num):
@@ -685,7 +684,7 @@ def simulate(config, rep_num):
     print(f"rho_obs: {rho_obs:6.3f}\nrho_ldr: {rho_ldr:6.3f}\nrho_pp: {rho_pp:6.3f}")
 
     # Patient generator stats
-    header = output_header("Patient generator and entry/exit stats", 50, rep_num)
+    header = output_header("Patient generator and entry/exit stats", 50, scenario, rep_num)
     print(header)
     print("Num patients generated: {}\n".format(obpat_gen.num_patients_created))
 
@@ -705,11 +704,11 @@ def simulate(config, rep_num):
                                   warmup=warmup_time, quantiles=[0.05, 0.25, 0.5, 0.75, 0.95, 0.99])
 
     occ_stats_df.to_csv(occ_stats_path, index=False)
-    header = output_header("Occupancy stats", 50, rep_num)
+    header = output_header("Occupancy stats", 50, scenario, rep_num)
     print(header)
     print(occ_stats_df)
 
-    header = output_header("Output logs", 50, rep_num)
+    header = output_header("Output logs", 50, scenario, rep_num)
     print(header)
     print(f"Stop log written to {stop_log_path}")
     print(f"Occupancy log written to {occ_log_path}")
@@ -748,7 +747,7 @@ if __name__ == '__main__':
     for i in range(1, num_replications + 1):
         simulate(config, i)
 
-    process_obsim_logs(stop_log_path, occ_stats_path, output_path, warmup=warmup_time, run_time=run_time)
+    #process_obsim_logs(stop_log_path, occ_stats_path, output_path, warmup=warmup_time, run_time=run_time)
 
     # Consolidate the patient logs and compute summary stats
     # patient_log_stats = process_sim_output(output_dir, scenario)
