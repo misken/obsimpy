@@ -3,19 +3,15 @@ import logging
 from enum import IntEnum
 from copy import deepcopy
 from pathlib import Path
-from datetime import datetime
 import argparse
 
-import numpy as np
 import simpy
 from numpy.random import default_rng
 import networkx as nx
 import pandas as pd
 import yaml
-from statsmodels.stats.weightstats import DescrStatsW
 
-from process_obsim_logs import process_obsim_logs
-
+from obflow_6_output import compute_occ_stats
 
 """
 Simple OB patient flow model 6 - Very simple OO
@@ -50,10 +46,8 @@ Key Lessons Learned:
 """
 
 
-
 class OBsystem(object):
     def __init__(self, env, locations, global_vars):
-
         self.env = env
 
         # Create individual patient care units
@@ -65,9 +59,9 @@ class OBsystem(object):
 
         # Unit index in obunits list should correspond to Unit enum value
         for location in locations:
-            self.obunits.append(OBunit(env, id=location, name=locations[location]['name'],
+            self.obunits.append(OBunit(env, unit_id=location, name=locations[location]['name'],
                                        capacity=locations[location]['capacity']))
-        #self.obunits.append(exit)
+        # self.obunits.append(exit)
 
         self.global_vars = global_vars
 
@@ -81,6 +75,7 @@ class OBsystem(object):
 class PatientType(IntEnum):
     REG_DELIVERY_UNSCHED = 1
     CSECT_DELIVERY_UNSCHED = 2
+
 
 class Unit(IntEnum):
     ENTRY = 0
@@ -105,10 +100,10 @@ class OBunit(object):
 
     """
 
-    def __init__(self, env, id, name, capacity=simpy.core.Infinity):
+    def __init__(self, env, unit_id, name, capacity=simpy.core.Infinity):
 
         self.env = env
-        self.id = id
+        self.id = unit_id
         self.name = name
         self.capacity = capacity
 
@@ -134,16 +129,15 @@ class OBunit(object):
 
             Parameters
             ----------
-            env : simpy.Environment
-                the simulation environment
-
             obpatient : OBPatient object
                 the patient requesting the bed
+            obsystem : OBSystem object
 
         """
 
         obpatient.current_stop_num += 1
-        logger.debug(f"{obpatient.name} trying to get {self.name} at {self.env.now:.4f} for stop_num {obpatient.current_stop_num}")
+        logger.debug(
+            f"{obpatient.name} trying to get {self.name} at {self.env.now:.4f} for stop_num {obpatient.current_stop_num}")
 
         # Timestamp of request time
         bed_request_ts = self.env.now
@@ -165,7 +159,8 @@ class OBunit(object):
         # Increments patient's attribute number of units visited (includes ENTRY and EXIT)
 
         obpatient.entry_ts[obpatient.current_stop_num] = self.env.now
-        obpatient.wait_to_enter[obpatient.current_stop_num] = self.env.now - obpatient.request_entry_ts[obpatient.current_stop_num]
+        obpatient.wait_to_enter[obpatient.current_stop_num] = self.env.now - obpatient.request_entry_ts[
+            obpatient.current_stop_num]
         obpatient.current_unit_id = self.id
 
         self.num_entries += 1
@@ -192,9 +187,9 @@ class OBunit(object):
             # Decrement occupancy
             previous_unit.dec_occ()
 
-
         logger.debug(f"{self.env.now:.4f}:{obpatient.name} entering {self.name} at {self.env.now:.4f}")
-        logger.debug(f"{self.env.now:.4f}:{obpatient.name} waited {self.env.now - bed_request_ts:.4f} time units for {self.name} bed")
+        logger.debug(
+            f"{self.env.now:.4f}:{obpatient.name} waited {self.env.now - bed_request_ts:.4f} time units for {self.name} bed")
 
         # Retrieve los and then yield for the stay
         los = obpatient.route_graph.nodes(data=True)[obpatient.current_unit_id]['planned_los']
@@ -241,14 +236,14 @@ class OBunit(object):
 
     def inc_occ(self, increment=1):
 
-        # Update vac occupancy - increment by 1
+        # Update occupancy - increment by 1
         prev_occ = self.occupancy_list[-1][1]
         new_occ = (self.env.now, prev_occ + increment)
         self.occupancy_list.append(new_occ)
 
     def dec_occ(self, decrement=1):
 
-        # Update vac occupancy - increment by 1
+        # Update occupancy - increment by 1
         prev_occ = self.occupancy_list[-1][1]
         new_occ = (self.env.now, prev_occ - decrement)
         self.occupancy_list.append(new_occ)
@@ -281,7 +276,6 @@ class OBunit(object):
 
                 obsystem.stops_timestamps_list.append(timestamps)
 
-
     def basic_stats_msg(self):
         """ Compute entries, exits, avg los and create summary message.
 
@@ -297,7 +291,7 @@ class OBunit(object):
         else:
             alos = 0
 
-        msg = "{:6}:\t Entries={}, Exits={}, Occ={}, ALOS={:4.2f}".\
+        msg = "{:6}:\t Entries={}, Exits={}, Occ={}, ALOS={:4.2f}". \
             format(self.name, self.num_entries, self.num_exits,
                    self.unit.count, alos)
         return msg
@@ -337,7 +331,7 @@ class OBPatient(object):
         self.next_unit_id = None
 
         self.route_graph = router.create_route(self.patient_type)
-        self.route_length = len(self.route_graph.edges) + 1 # Includes ENTRY and EXIT
+        self.route_length = len(self.route_graph.edges) + 1  # Includes ENTRY and EXIT
 
         # Since we have fixed route, just initialize full list to hold bed requests
         # The index numbers are stop numbers and so slot 0 is for ENTRY location
@@ -357,10 +351,9 @@ class OBPatient(object):
 
         self.system_exit_ts = None
 
-
     def __repr__(self):
         return "patientid: {}, patient_type: {}, time: {}". \
-            format(self.patient_id, self.patient_type, self.arr_time)
+            format(self.patient_id, self.patient_type, self.system_arrival_ts)
 
 
 class OBStaticRouter(object):
@@ -383,10 +376,8 @@ class OBStaticRouter(object):
         self.route_graphs = {}
 
         # Create route templates from routes list (of unit numbers)
-        route_num = 0
         for route_num, route in routes.items():
             route_graph = nx.DiGraph()
-            #route_num = route['id']
 
             # Add each unit number as a node
             for loc_num, location in locations.items():
@@ -453,7 +444,8 @@ class OBStaticRouter(object):
             logger.error(f"{self.env.now:.4f}:{obpatient.name} has no next unit at {obpatient.current_unit_id}.")
             exit(1)
 
-        logger.debug(f"{self.env.now:.4f}:{obpatient.name} current_unit_id {obpatient.current_unit_id}, next_unit_id {next_unit_id}")
+        logger.debug(
+            f"{self.env.now:.4f}:{obpatient.name} current_unit_id {obpatient.current_unit_id}, next_unit_id {next_unit_id}")
         return next_unit_id
 
 
@@ -483,7 +475,6 @@ class OBPatientGenerator(object):
 
     def __init__(self, env, obsystem, router, arr_rate, arr_stream_rg,
                  initial_delay=0, stoptime=simpy.core.Infinity, max_arrivals=simpy.core.Infinity):
-
         self.env = env
         self.obsystem = obsystem
         self.router = router
@@ -507,7 +498,7 @@ class OBPatientGenerator(object):
         yield self.env.timeout(self.initial_delay)
         # Main generator loop that terminates when stoptime reached
         while self.env.now < self.stoptime and \
-                        self.num_patients_created < self.max_arrivals:
+                self.num_patients_created < self.max_arrivals:
             # Compute next interarrival time
             iat = self.arr_stream_rg.exponential(1.0 / self.arr_rate)
             # Delay until time for next arrival
@@ -521,8 +512,6 @@ class OBPatientGenerator(object):
 
             # Initiate process of patient entering system
             self.env.process(self.obsystem.obunits[Unit.ENTRY].put(obpatient, self.obsystem))
-
-
 
 
 def process_command_line():
@@ -550,17 +539,13 @@ def process_command_line():
     args = parser.parse_args()
 
     # Read inputs from config file
-    with open(args.config, 'rt') as yamlfile:
-        config = yaml.safe_load(yamlfile)
+    with open(args.config, 'rt') as yaml_file:
+        yaml_config = yaml.safe_load(yaml_file)
 
-    return config, args.loglevel
-
-
-
+    return yaml_config, args.loglevel
 
 
 def write_stop_log(csv_path, obsystem, egress=False):
-
     timestamp_df = pd.DataFrame(obsystem.stops_timestamps_list)
     if egress:
         timestamp_df.to_csv(csv_path, index=False)
@@ -579,54 +564,13 @@ def output_header(msg, linelen, scenario, rep_num):
     header = f"\n{msg} (scenario={scenario} rep={rep_num})\n{'-' * linelen}\n"
     return header
 
-def compute_occ_stats(obsystem, end_time, egress=False, log_path=None, warmup=0,
-                      quantiles=[0.05, 0.25, 0.5, 0.75, 0.95, 0.99]):
 
-    occ_stats_dfs = []
-    occ_dfs = []
-    for unit in obsystem.obunits:
-        occ = unit.occupancy_list
-
-        df = pd.DataFrame(occ, columns=['timestamp', 'occ'])
-        df['occ_weight'] = -1 * df['timestamp'].diff(periods=-1)
-
-        last_weight = end_time - df.iloc[-1, 0]
-        df.fillna(last_weight, inplace=True)
-        df['unit'] = unit.name
-        occ_dfs.append(df)
-
-        # Filter out recs before warmup
-        df = df[df['timestamp'] > warmup]
-
-        weighted_stats = DescrStatsW(df['occ'], weights=df['occ_weight'], ddof=0)
-
-        occ_quantiles = weighted_stats.quantile(quantiles)
-        occ_stats_df = pd.DataFrame([{'unit': unit.name, 'capacity': unit.capacity,
-                                      'mean_occ': weighted_stats.mean, 'sd_occ': weighted_stats.std,
-                                      'min_occ': df['occ'].min(), 'max_occ': df['occ'].max()}])
-
-        quantiles_df = pd.DataFrame(occ_quantiles).transpose()
-        quantiles_df.rename(columns = lambda x: f"p{100 * x:02.0f}_occ", inplace=True)
-
-        occ_stats_df = pd.concat([occ_stats_df, quantiles_df], axis=1)
-        occ_stats_dfs.append(occ_stats_df)
-
-
-    if log_path is not None:
-        occ_df = pd.concat(occ_dfs)
-        if egress:
-            occ_df.to_csv(log_path, index=False)
-        else:
-            occ_df[(occ_df['unit'] != 'ENTRY') &
-                         (occ_df['unit'] != 'EXIT')].to_csv(log_path, index=False)
-
-
-def simulate(config, rep_num):
+def simulate(sim_inputs, rep_num):
     """
 
     Parameters
     ----------
-    arg_dict : dict whose keys are the input args
+    sim_inputs : dict whose keys are the simulation input args
     rep_num : int, simulation replication number
 
     Returns
@@ -635,16 +579,16 @@ def simulate(config, rep_num):
 
     """
 
-    scenario = config['scenario']
+    scenario = sim_inputs['scenario']
 
-    run_settings = config['run_settings']
+    run_settings = sim_inputs['run_settings']
     run_time = run_settings['run_time']
     warmup_time = run_settings['warmup_time']
-    global_vars = config['global_vars']
-    paths = config['paths']
-    random_number_streams = config['random_number_streams']
-    locations = config['locations']
-    routes = config['routes']
+    global_vars = sim_inputs['global_vars']
+    paths = sim_inputs['paths']
+    random_number_streams = sim_inputs['random_number_streams']
+    locations = sim_inputs['locations']
+    routes = sim_inputs['routes']
 
     stop_log_path = Path(paths['stop_logs']) / f"unit_stop_log_scenario_{scenario}_rep_{rep_num}.csv"
     occ_log_path = Path(paths['occ_logs']) / f"unit_occ_log_scenario_{scenario}_rep_{rep_num}.csv"
@@ -678,7 +622,8 @@ def simulate(config, rep_num):
     rho_obs = global_vars['arrival_rate'] * global_vars['mean_los_obs'] / locations[Unit.OBS]['capacity']
     rho_ldr = global_vars['arrival_rate'] * global_vars['mean_los_ldr'] / locations[Unit.LDR]['capacity']
     mean_los_pp = global_vars['mean_los_pp_c'] * global_vars['c_sect_prob'] + \
-        global_vars['mean_los_pp_noc'] * (1 - global_vars['c_sect_prob'])
+                  global_vars['mean_los_pp_noc'] * (1 - global_vars['c_sect_prob'])
+
     rho_pp = global_vars['arrival_rate'] * mean_los_pp / locations[Unit.PP]['capacity']
 
     print(f"rho_obs: {rho_obs:6.3f}\nrho_ldr: {rho_ldr:6.3f}\nrho_pp: {rho_pp:6.3f}")
@@ -700,8 +645,8 @@ def simulate(config, rep_num):
     write_stop_log(stop_log_path, obsystem)
 
     occ_stats_df = compute_occ_stats(obsystem, run_time,
-                                  log_path=occ_log_path,
-                                  warmup=warmup_time, quantiles=[0.05, 0.25, 0.5, 0.75, 0.95, 0.99])
+                                     log_path=occ_log_path,
+                                     warmup=warmup_time, quantiles=[0.05, 0.25, 0.5, 0.75, 0.95, 0.99])
 
     occ_stats_df.to_csv(occ_stats_path, index=False)
     header = output_header("Occupancy stats", 50, scenario, rep_num)
@@ -721,10 +666,6 @@ if __name__ == '__main__':
 
     config, loglevel = process_command_line()
 
-    numeric_level = getattr(logging, loglevel.upper(), None)
-    if not isinstance(numeric_level, int):
-        raise ValueError('Invalid log level: %s' % loglevel)
-
     logging.basicConfig(
         level=numeric_level,
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -734,20 +675,20 @@ if __name__ == '__main__':
     logger = logging.getLogger(__name__)
 
     num_replications = config['run_settings']['num_replications']
-    run_time = config['run_settings']['run_time']
-    warmup_time = config['run_settings']['warmup_time']
-    paths = config['paths']
-
-    stop_log_path = Path(paths['stop_logs'])
-    occ_log_path = Path(paths['occ_logs'])
-    occ_stats_path = Path(paths['occ_stats'])
-    output_path = Path(paths['output'])
+    # run_time = config['run_settings']['run_time']
+    # warmup_time = config['run_settings']['warmup_time']
+    # paths = config['paths']
+    #
+    # stop_log_path = Path(paths['stop_logs'])
+    # occ_log_path = Path(paths['occ_logs'])
+    # occ_stats_path = Path(paths['occ_stats'])
+    # output_path = Path(paths['output'])
 
     # Main simulation replication loop
     for i in range(1, num_replications + 1):
         simulate(config, i)
 
-    #process_obsim_logs(stop_log_path, occ_stats_path, output_path, warmup=warmup_time, run_time=run_time)
+    # process_obsim_logs(stop_log_path, occ_stats_path, output_path, warmup=warmup_time, run_time=run_time)
 
     # Consolidate the patient logs and compute summary stats
     # patient_log_stats = process_sim_output(output_dir, scenario)

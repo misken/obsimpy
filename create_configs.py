@@ -66,12 +66,10 @@ def config_from_csv(scenarios_csv_path, settings_path, config_path, bat_path):
             bat_file.write(run_line)
 
 
-
-
 if __name__ == '__main__':
-    scenarios_csv_path = Path('inputs/exp10_tandem05_metainputs.csv')
-    settings_path = Path('inputs/exp10_tandem05_settings.yaml')
-    config_path = Path('inputs/config')
-    bat_path = Path('.') / 'exp10_tandem05_run.sh'
+    scenarios_csv_path = Path('input/exp10_obflow06_metainputs.csv')
+    settings_path = Path('input/exp11_obflow06_settings.yaml')
+    config_path = Path('input/config/exp11')
+    bat_path = Path('./run') / 'exp11_obflow06_run.sh'
 
     config_from_csv(scenarios_csv_path, settings_path, config_path, bat_path)

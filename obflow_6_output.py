@@ -1,14 +1,14 @@
+import argparse
 import re
 from datetime import datetime
 from pathlib import Path
 import math
 
-import numpy as np
 import pandas as pd
-from pandas import Timestamp
 from statsmodels.stats.weightstats import DescrStatsW
 
 import obnetwork2
+
 
 def num_gt_0(column):
     return (column != 0).sum()
@@ -39,7 +39,8 @@ def get_stats(group, stub=''):
                 stub+'p975': group.quantile(0.975), stub+'p99': group.quantile(0.99)}
 
 
-def process_obsim_logs(stop_log_path, occ_stats_path, output_path, run_time, warmup=0, output_file_stem='scenario_rep_stats_summary'):
+def process_obsim_logs(stop_log_path, occ_stats_path, output_path,
+                       run_time, warmup=0, output_file_stem='scenario_rep_stats_summary'):
 
     start_analysis = warmup
     end_analysis = run_time
@@ -88,8 +89,8 @@ def process_obsim_logs(stop_log_path, occ_stats_path, output_path, run_time, war
 
         newrec['num_visits_obs'] = blocked_uncond_stats[('OBS', 'delay_count')]
         newrec['num_visits_ldr'] = blocked_uncond_stats[('LDR', 'delay_count')]
-        newrec['num_visits_pp'] = blocked_uncond_stats[('PP','delay_count')]
-        newrec['num_visits_csect'] = blocked_uncond_stats[('CSECT','delay_count')]
+        newrec['num_visits_pp'] = blocked_uncond_stats[('PP', 'delay_count')]
+        newrec['num_visits_csect'] = blocked_uncond_stats[('CSECT', 'delay_count')]
 
         # OBS LOS
         newrec['planned_los_mean_obs'] = plos_mean['OBS']
@@ -234,8 +235,8 @@ def process_obsim_logs(stop_log_path, occ_stats_path, output_path, run_time, war
         newrec['occ_min_csect'] = occ_stats_df.loc['CSECT']['min_occ']
         newrec['occ_max_csect'] = occ_stats_df.loc['CSECT']['max_occ']
 
-
-        newrec['pct_waitq_ldr'] = blocked_uncond_stats[('LDR', 'delay_num_gt_0')]/blocked_uncond_stats[('LDR', 'delay_count')]
+        newrec['pct_waitq_ldr'] = \
+            blocked_uncond_stats[('LDR', 'delay_num_gt_0')]/blocked_uncond_stats[('LDR', 'delay_count')]
 
         if ('LDR', 'delay_mean') in blocked_cond_stats.index:
             newrec['waitq_ldr_mean'] = blocked_cond_stats[('LDR', 'delay_mean')]
@@ -244,7 +245,8 @@ def process_obsim_logs(stop_log_path, occ_stats_path, output_path, run_time, war
             newrec['waitq_ldr_mean'] = 0.0
             newrec['waitq_ldr_p95'] = 0.0
 
-        newrec['pct_blocked_by_pp'] = blocked_uncond_stats[('PP', 'delay_num_gt_0')]/blocked_uncond_stats[('PP', 'delay_count')]
+        newrec['pct_blocked_by_pp'] = \
+            blocked_uncond_stats[('PP', 'delay_num_gt_0')]/blocked_uncond_stats[('PP', 'delay_count')]
 
         if ('PP', 'delay_mean') in blocked_cond_stats.index:
             newrec['blocked_by_pp_mean'] = blocked_cond_stats[('PP', 'delay_mean')]
@@ -266,9 +268,8 @@ def process_obsim_logs(stop_log_path, occ_stats_path, output_path, run_time, war
         with open(output_json_file, 'a') as json_output:
             json_output.write(str(newrec)+'\n')
 
-
     results_df = pd.DataFrame(results)
-    cols = ["scenario","rep","timestamp", "num_days",
+    cols = ["scenario", "rep", "timestamp", "num_days",
             "num_visits_obs", "num_visits_ldr", "num_visits_pp", "num_visits_csect",
             "planned_los_mean_obs", "actual_los_mean_obs", "planned_los_sd_obs", "actual_los_sd_obs",
             "planned_los_cv2_obs", "actual_los_cv2_obs",
@@ -297,58 +298,52 @@ def process_obsim_logs(stop_log_path, occ_stats_path, output_path, run_time, war
     results_df.to_csv(output_csv_file, index=False)
 
 
-def compute_occ_stats(units=['OBS', 'LDR', 'CSECT', 'PP'],
-                      occ_log_path=None, occ_stats_path=None,
-                      warmup=0,
-                      quantiles=[0.05, 0.25, 0.5, 0.75, 0.95, 0.99]):
+def compute_occ_stats(obsystem, end_time, egress=False, log_path=None, warmup=0,
+                      quantiles=(0.05, 0.25, 0.5, 0.75, 0.95, 0.99)):
+    occ_stats_dfs = []
+    occ_dfs = []
+    for unit in obsystem.obunits:
+        occ = unit.occupancy_list
 
+        df = pd.DataFrame(occ, columns=['timestamp', 'occ'])
+        df['occ_weight'] = -1 * df['timestamp'].diff(periods=-1)
 
+        last_weight = end_time - df.iloc[-1, 0]
+        df.fillna(last_weight, inplace=True)
+        df['unit'] = unit.name
+        occ_dfs.append(df)
 
-    rx = re.compile(r'_scenario_([0-9]{1,4})_rep_([0-9]{1,4})')
-
-    results = []
-
-    for log_fn in occ_log_path.glob('unit_occ_log*.csv'):
-        # Get scenario and rep numbers from filename
-        m = re.search(rx, str(log_fn))
-        scenario_name = m.group(0)
-        scenario_num = m.group(1)
-        rep_num = m.group(2)
-        print(scenario_name, scenario_num, rep_num)
-
-        occ_stats_file = Path(occ_stats_path) / f"unit_occ_stats_scenario_{scenario_num}_rep_{rep_num}.csv"
-
-        # Read the log file and filter by included categories
-        df = pd.read_csv(log_fn)
-
-        occ_stats_dfs = []
         # Filter out recs before warmup
-        for unit in units:
-            unit_df = df[(df['timestamp'] > warmup) & (df['unit'] == unit)]
+        df = df[df['timestamp'] > warmup]
 
-            weighted_stats = DescrStatsW(unit_df['occ'], weights=unit_df['occ_weight'], ddof=0)
+        weighted_stats = DescrStatsW(df['occ'], weights=df['occ_weight'], ddof=0)
 
-            occ_quantiles = weighted_stats.quantile(quantiles)
-            occ_stats_df = pd.DataFrame([{'unit': unit,
-                                          'mean_occ': weighted_stats.mean, 'sd_occ': weighted_stats.std,
-                                          'min_occ': unit_df['occ'].min(), 'max_occ': unit_df['occ'].max()}])
+        occ_quantiles = weighted_stats.quantile(quantiles)
+        occ_unit_stats_df = pd.DataFrame([{'unit': unit.name, 'capacity': unit.capacity,
+                                           'mean_occ': weighted_stats.mean, 'sd_occ': weighted_stats.std,
+                                           'min_occ': df['occ'].min(), 'max_occ': df['occ'].max()}])
 
-            quantiles_df = pd.DataFrame(occ_quantiles).transpose()
-            quantiles_df.rename(columns = lambda x: f"p{100 * x:02.0f}_occ", inplace=True)
+        quantiles_df = pd.DataFrame(occ_quantiles).transpose()
+        quantiles_df.rename(columns=lambda x: f"p{100 * x:02.0f}_occ", inplace=True)
 
-            occ_stats_df = pd.concat([occ_stats_df, quantiles_df], axis=1)
-            occ_stats_dfs.append(occ_stats_df)
+        occ_unit_stats_df = pd.concat([occ_unit_stats_df, quantiles_df], axis=1)
+        occ_stats_dfs.append(occ_unit_stats_df)
+
+    occ_stats_df = pd.concat(occ_stats_dfs)
+
+    if log_path is not None:
+        occ_df = pd.concat(occ_dfs)
+        if egress:
+            occ_df.to_csv(log_path, index=False)
+        else:
+            occ_df[(occ_df['unit'] != 'ENTRY') &
+                   (occ_df['unit'] != 'EXIT')].to_csv(log_path, index=False)
+
+    return occ_stats_df
 
 
-        occ_stats_df =  pd.concat(occ_stats_dfs)
-        occ_stats_df.to_csv(occ_stats_file, index=False)
-        header = output_header("Occupancy stats", 50, scenario_num, rep_num)
-        print(header)
-        print(occ_stats_df)
-
-
-def output_header(msg, linelen, scenario, rep_num):
-    header = f"\n{msg} (scenario={scenario} rep={rep_num})\n{'-' * linelen}\n"
+def output_header(msg, line_len, scenario, rep_num):
+    header = f"\n{msg} (scenario={scenario} rep={rep_num})\n{'-' * line_len}\n"
     return header
 
 
@@ -380,9 +375,9 @@ def qng_approx(scenario_inputs_summary):
         sim_mean_pct_blocked_by_pp = row[1]['mean_pct_blocked_by_pp']
         sim_mean_blocked_by_pp_mean = row[1]['mean_blocked_by_pp_mean']
 
-        ldr_pct_blockedby_pp = obnetwork2.ldr_prob_blockedby_pp_hat(arr_rate, pp_mean_svctime, pp_cap, pp_cv2_svctime)
-        ldr_meantime_blockedby_pp = obnetwork2.ldr_condmeantime_blockedby_pp_hat(arr_rate, pp_mean_svctime, pp_cap,
-                                                                                 pp_cv2_svctime)
+        ldr_pct_blockedby_pp = obnetwork2.prob_blockedby_pp_hat(arr_rate, pp_mean_svctime, pp_cap, pp_cv2_svctime)
+        ldr_meantime_blockedby_pp = obnetwork2.condmeantime_blockedby_pp_hat(arr_rate, pp_mean_svctime, pp_cap,
+                                                                             pp_cv2_svctime)
         (obs_meantime_blockedbyldr, ldr_effmean_svctime, obs_prob_blockedby_ldr, obs_condmeantime_blockedbyldr) = \
             obnetwork2.obs_blockedby_ldr_hats(arr_rate, c_sect_prob, ldr_mean_svctime, ldr_cv2_svctime, ldr_cap,
                                               pp_mean_svctime, pp_cv2_svctime, pp_cap)
@@ -410,10 +405,10 @@ def qng_approx(scenario_inputs_summary):
     return results_df
 
 
-def aggregate_over_reps(scenario_rep_summary_path, scenario_summary_path):
+def aggregate_over_reps(scen_rep_summary_path):
     """Compute summary stats by scenario (aggregating over replications)"""
 
-    output_stats_summary_df = pd.read_csv(scenario_rep_summary_path).sort_values(by=['scenario', 'rep'])
+    output_stats_summary_df = pd.read_csv(scen_rep_summary_path).sort_values(by=['scenario', 'rep'])
 
     output_stats_summary_agg_df = output_stats_summary_df.groupby(['scenario']).agg(
         num_visits_obs_mean=pd.NamedAgg(column='num_visits_obs', aggfunc='mean'),
@@ -460,7 +455,7 @@ def aggregate_over_reps(scenario_rep_summary_path, scenario_summary_path):
         mean_blocked_by_pp_p95=pd.NamedAgg(column='blocked_by_pp_p95', aggfunc='mean'),
     )
 
-    output_stats_summary_agg_df.to_csv(scenario_summary_path, index=True)
+    return output_stats_summary_agg_df
 
 
 def hyper_erlang_moment(rates, stages, probs, moment):
@@ -471,47 +466,111 @@ def hyper_erlang_moment(rates, stages, probs, moment):
     return sum(terms)
 
 
-if __name__ == '__main__':
+def create_sim_summaries(output_path, suffix,
+                         include_inputs=True,
+                         scenario_inputs_path=None,
+                         include_qng_approx=True,
+                         ):
 
-    scenario_inputs_path = Path('./input/exp10_tandem05_metainputs.csv')
-    stop_log_path = Path('./logs')
-    occ_log_path = Path('./logs')
-    occ_stats_path = Path('./stats_warmup')
-    output_path = Path('./output')
-    scenario_rep_summary_stem = 'scenario_rep_stats_summary'
-    scenario_summary_stem = 'scenario_stats_summary'
-    scenario_inputs_summary_qng_stem = 'scenario_inputs_summary_qng'
-    run_time = 60000
-    warmup_time = 4800
-
-    b_compute_occ_stats = False
-    b_process_obsim_logs = False
-
-
-    # From occupancy logs, compute occupancy summary stats
-    if b_compute_occ_stats:
-        compute_occ_stats(units=['OBS', 'LDR', 'CSECT', 'PP'],
-                                occ_log_path=occ_log_path, occ_stats_path=occ_stats_path,
-                                warmup=warmup_time, quantiles=[0.05, 0.25, 0.5, 0.75, 0.95, 0.99])
-
-    if b_process_obsim_logs:
-    # From the patient stop logs, compute summary stats by scenario by replication
-        process_obsim_logs(stop_log_path, occ_stats_path, output_path, run_time, warmup=warmup_time,
-                           output_file_stem=scenario_rep_summary_stem)
+    scenario_rep_summary_stem = f'scenario_rep_stats_summary{suffix}'
+    scenario_summary_stem = f'scenario_stats_summary{suffix}'
 
     # Compute summary stats by scenario (aggregating over the replications)
     scenario_rep_summary_path = output_path / f"{scenario_rep_summary_stem}.csv"
     scenario_summary_path = output_path / f"{scenario_summary_stem}.csv"
-    aggregate_over_reps(scenario_rep_summary_path, scenario_summary_path)
-    scenario_summary_df = pd.read_csv(scenario_summary_path)
+    scenario_summary_df = aggregate_over_reps(scenario_rep_summary_path)
+    scenario_summary_df.to_csv(scenario_summary_path, index=True)
 
     # Merge the scenario summary with the scenario inputs
-    scenario_inputs_df = pd.read_csv(scenario_inputs_path)
-    scenario_inputs_summary_df = scenario_inputs_df.merge(scenario_summary_df, on=['scenario'])
+    if include_inputs:
 
-    # Using the scenario summary we just created
-    qng_approx_df = qng_approx(scenario_inputs_summary_df)
+        scenario_rep_inputs_summary_stem = f'scenario_rep_inputs_summary{suffix}'
+        scenario_inputs_df = pd.read_csv(scenario_inputs_path)
+        scenario_inputs_summary_df = scenario_inputs_df.merge(scenario_summary_df, on=['scenario'])
+        scenario_rep_summary_df = pd.read_csv(scenario_rep_summary_path)
+        scenario_rep_inputs_summary_df = scenario_rep_summary_df.merge(scenario_inputs_df, on=['scenario'])
+        scenario_rep_inputs_summary_path = output_path / f"{scenario_rep_inputs_summary_stem}.csv"
+        scenario_rep_inputs_summary_df.to_csv(scenario_rep_inputs_summary_path, index=False)
 
-    scenario_inputs_summary_qng_df = scenario_inputs_summary_df.merge(qng_approx_df, on=['scenario'])
-    scenario_inputs_summary_qng_path = output_path / f"{scenario_inputs_summary_qng_stem}.csv"
-    scenario_inputs_summary_qng_df.to_csv(scenario_inputs_summary_qng_path, index=False)
+        # Using the scenario summary we just created
+        if include_qng_approx:
+            scenario_inputs_summary_qng_stem = f'scenario_inputs_summary_qng{suffix}'
+            qng_approx_df = qng_approx(scenario_inputs_summary_df)
+            scenario_inputs_summary_qng_df = scenario_inputs_summary_df.merge(qng_approx_df, on=['scenario'])
+            scenario_inputs_summary_qng_path = output_path / f"{scenario_inputs_summary_qng_stem}.csv"
+            scenario_inputs_summary_qng_df.to_csv(scenario_inputs_summary_qng_path, index=False)
+
+
+def process_command_line():
+    """
+    Parse command line arguments
+
+    `argv` is a list of arguments, or `None` for ``sys.argv[1:]``.
+    Return a Namespace representing the argument list.
+    """
+
+    # Create the parser
+    parser = argparse.ArgumentParser(prog='obflow_6_output',
+                                     description='Run inpatient OB simulation')
+
+    # Add arguments
+    parser.add_argument(
+        "output_path", type=str,
+        help="Path for output summary files"
+    )
+
+    parser.add_argument(
+        "suffix", type=str,
+        help="String to append to various summary filenames"
+    )
+
+    parser.add_argument('--process_logs', dest='process_logs', action='store_true')
+    parser.add_argument(
+        "--stop_log_path", type=str, default=None,
+        help="Path containing stop logs"
+    )
+    parser.add_argument(
+        "--occ_stats_path", type=str, default=None,
+        help="Path containing occ stats csvs"
+    )
+
+    parser.add_argument(
+        "--run_time", type=float, default=None,
+        help="Simulation run time"
+    )
+
+    parser.add_argument(
+        "--warmup_time", type=float, default=None,
+        help="Simulation warmup time"
+    )
+
+    parser.add_argument('--include_inputs', dest='include_inputs', action='store_true')
+    parser.add_argument(
+        "--scenario_inputs_path", type=str, default=None,
+        help="Filename for scenario inputs"
+    )
+    parser.add_argument('--include_qng_approx', dest='include_qng_approx', action='store_true')
+
+    # do the parsing
+    args = parser.parse_args()
+
+    return args
+
+
+if __name__ == '__main__':
+
+    inputs = process_command_line()
+    #
+    # b_process_obsim_logs = False
+    #
+    if inputs.process_logs:
+        scenario_rep_summary_stem = f'scenario_rep_stats_summary{inputs.suffix}'
+    #     # From the patient stop logs, compute summary stats by scenario by replication
+        process_obsim_logs(Path(inputs.stop_log_path), Path(inputs.occ_stats_path),
+                           Path(inputs.output_path), inputs.run_time, warmup=inputs.warmup_time,
+                           output_file_stem=scenario_rep_summary_stem)
+
+    create_sim_summaries(Path(inputs.output_path), inputs.suffix,
+                         include_inputs=inputs.include_inputs,
+                         scenario_inputs_path=inputs.scenario_inputs_path,
+                         include_qng_approx=inputs.include_qng_approx)
