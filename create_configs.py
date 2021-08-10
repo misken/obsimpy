@@ -5,17 +5,17 @@ import numpy as np
 import yaml
 
 
-def config_from_csv(scenarios_csv_path, settings_path, config_path, bat_path):
+def config_from_csv(scenarios_csv_path_, settings_path_, config_path_, bat_path_):
 
     # Read scenarios file in DataFrame
-    scenarios_df = pd.read_csv(scenarios_csv_path)
+    scenarios_df = pd.read_csv(scenarios_csv_path_)
     # Read settings file
-    with open(settings_path, 'rt') as settings_file:
+    with open(settings_path_, 'rt') as settings_file:
         settings = yaml.safe_load(settings_file)
         print(settings)
 
     global_vars = {}
-    with open(bat_path, 'w') as bat_file:
+    with open(bat_path_, 'w') as bat_file:
     # Iterate over rows in scenarios file
         for row in scenarios_df.iterrows():
             scenario = int(row[1]['scenario'].tolist())
@@ -57,7 +57,7 @@ def config_from_csv(scenarios_csv_path, settings_path, config_path, bat_path):
             config['routes'] = settings['routes']
             config['global_vars'] = global_vars
 
-            config_file_path = Path(config_path) / f'scenario_{scenario}.yaml'
+            config_file_path = Path(config_path_) / f'scenario_{scenario}.yaml'
 
             with open(config_file_path, 'w', encoding='utf-8') as config_file:
                 yaml.dump(config, config_file)

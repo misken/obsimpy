@@ -4,8 +4,10 @@ from datetime import datetime
 from pathlib import Path
 import math
 
+import numpy as np
 import pandas as pd
 from statsmodels.stats.weightstats import DescrStatsW
+from scipy.stats import t
 
 import obnetwork2
 
@@ -457,6 +459,37 @@ def aggregate_over_reps(scen_rep_summary_path):
 
     return output_stats_summary_agg_df
 
+def conf_intervals(scenario_rep_summary_df):
+    """Compute CIs by scenario (aggregating over replications)"""
+
+    occ_mean_obs_ci = varsum(scenario_rep_summary_df, 'obs', 'occ_mean_obs', 0.05)
+    occ_p05_obs_ci = varsum(scenario_rep_summary_df, 'obs', 'occ_p95_obs', 0.05)
+
+    occ_mean_ldr_ci = varsum(scenario_rep_summary_df, 'ldr', 'occ_mean_ldr', 0.05)
+    occ_p05_ldr_ci = varsum(scenario_rep_summary_df, 'ldr', 'occ_p95_ldr', 0.05)
+
+    occ_mean_pp_ci = varsum(scenario_rep_summary_df, 'pp', 'occ_mean_pp', 0.05)
+    occ_p05_pp_ci = varsum(scenario_rep_summary_df, 'pp', 'occ_p95_pp', 0.05)
+
+    pct_waitq_ldr_ci = varsum(scenario_rep_summary_df, 'ldr', 'pct_waitq_ldr', 0.05)
+    waitq_ldr_mean_ci = varsum(scenario_rep_summary_df, 'ldr', 'waitq_ldr_mean', 0.05)
+    waitq_ldr_p95_ci = varsum(scenario_rep_summary_df, 'ldr', 'waitq_ldr_p95', 0.05)
+
+    pct_blocked_by_pp_ci = varsum(scenario_rep_summary_df, 'pp', 'pct_blocked_by_pp', 0.05)
+    blocked_by_pp_mean_ci = varsum(scenario_rep_summary_df, 'pp', 'blocked_by_pp_mean', 0.05)
+    blocked_by_pp_p95_ci = varsum(scenario_rep_summary_df, 'pp', 'blocked_by_pp_p95', 0.05)
+
+    ci_dfs = [occ_mean_obs_ci, occ_p05_obs_ci,
+              occ_mean_ldr_ci, occ_p05_ldr_ci,
+              occ_mean_pp_ci, occ_p05_pp_ci,
+              pct_waitq_ldr_ci, waitq_ldr_mean_ci, waitq_ldr_p95_ci,
+              pct_blocked_by_pp_ci, blocked_by_pp_mean_ci, blocked_by_pp_p95_ci]
+
+
+
+    ci_df = pd.concat(ci_dfs)
+    return ci_df
+
 
 def hyper_erlang_moment(rates, stages, probs, moment):
     terms = [probs[i - 1] * math.factorial(stages[i - 1] + moment - 1) * (1 / math.factorial(stages[i - 1] - 1)) * (
@@ -472,14 +505,20 @@ def create_sim_summaries(output_path, suffix,
                          include_qng_approx=True,
                          ):
 
-    scenario_rep_summary_stem = f'scenario_rep_stats_summary{suffix}'
+    scenario_rep_summary_stem_ = f'scenario_rep_stats_summary{suffix}'
     scenario_summary_stem = f'scenario_stats_summary{suffix}'
+    scenario_ci_stem = f'scenario_ci{suffix}'
 
     # Compute summary stats by scenario (aggregating over the replications)
-    scenario_rep_summary_path = output_path / f"{scenario_rep_summary_stem}.csv"
+    scenario_rep_summary_path = output_path / f"{scenario_rep_summary_stem_}.csv"
+    scenario_rep_summary_df = pd.read_csv(scenario_rep_summary_path)
     scenario_summary_path = output_path / f"{scenario_summary_stem}.csv"
     scenario_summary_df = aggregate_over_reps(scenario_rep_summary_path)
     scenario_summary_df.to_csv(scenario_summary_path, index=True)
+
+    scenario_ci_df = conf_intervals(scenario_rep_summary_df)
+    scenario_ci_path = output_path / f"{scenario_ci_stem}.csv"
+    scenario_ci_df.to_csv(scenario_ci_path, index=True)
 
     # Merge the scenario summary with the scenario inputs
     if include_inputs:
@@ -557,15 +596,44 @@ def process_command_line():
     return args
 
 
+def varsum(df, unit, pm, alpha):
+    """Summarize variance in performance measure across replications within a scenario"""
+
+    # alpha is for construction 1-alpha CI
+    # Precision is CI half width / mean and is measure of relative error
+
+    pm_varsum_df = df.groupby(['scenario']).agg(
+        pm_mean=pd.NamedAgg(column=pm, aggfunc='mean'),
+        pm_std=pd.NamedAgg(column=pm, aggfunc='std'),
+        pm_n=pd.NamedAgg(column=pm, aggfunc='count'),
+        pm_min=pd.NamedAgg(column=pm, aggfunc='min'),
+        pm_max=pd.NamedAgg(column=pm, aggfunc='max'))
+
+    pm_varsum_df['pm_cv'] = \
+        pm_varsum_df['pm_std'] / pm_varsum_df['pm_mean']
+
+    pm_varsum_df['ci_halfwidth'] = \
+        t.ppf(1 - alpha / 2, pm_varsum_df['pm_n'] - 1) * pm_varsum_df['pm_std'] / np.sqrt(pm_varsum_df['pm_n'])
+
+    pm_varsum_df['ci_precision'] = pm_varsum_df['ci_halfwidth'] / pm_varsum_df['pm_mean']
+
+    pm_varsum_df['ci_lower'] = pm_varsum_df['pm_mean'] - pm_varsum_df['ci_halfwidth']
+    pm_varsum_df['ci_upper'] = pm_varsum_df['pm_mean'] + pm_varsum_df['ci_halfwidth']
+
+    pm_varsum_df['unit'] = unit
+    pm_varsum_df['pm'] = pm
+
+    return pm_varsum_df
+
+
 if __name__ == '__main__':
 
     inputs = process_command_line()
-    #
-    # b_process_obsim_logs = False
-    #
+
     if inputs.process_logs:
+        # From the patient stop logs, compute summary stats by scenario by replication
         scenario_rep_summary_stem = f'scenario_rep_stats_summary{inputs.suffix}'
-    #     # From the patient stop logs, compute summary stats by scenario by replication
+
         process_obsim_logs(Path(inputs.stop_log_path), Path(inputs.occ_stats_path),
                            Path(inputs.output_path), inputs.run_time, warmup=inputs.warmup_time,
                            output_file_stem=scenario_rep_summary_stem)
@@ -574,3 +642,5 @@ if __name__ == '__main__':
                          include_inputs=inputs.include_inputs,
                          scenario_inputs_path=inputs.scenario_inputs_path,
                          include_qng_approx=inputs.include_qng_approx)
+
+
