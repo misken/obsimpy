@@ -667,7 +667,7 @@ if __name__ == '__main__':
     config, loglevel = process_command_line()
 
     logging.basicConfig(
-        level=numeric_level,
+        level=loglevel,
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
         stream=stdout,
     )

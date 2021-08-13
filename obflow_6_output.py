@@ -9,7 +9,7 @@ import pandas as pd
 from statsmodels.stats.weightstats import DescrStatsW
 from scipy.stats import t
 
-import obnetwork2
+from obnetwork import obnetwork
 
 
 def num_gt_0(column):
@@ -18,31 +18,47 @@ def num_gt_0(column):
 
 def get_stats(group, stub=''):
     if group.sum() == 0:
-        return {stub+'count': group.count(), stub+'mean': 0.0,
-                stub+'min': 0.0, stub+'num_gt_0': 0,
-                stub+'max': 0.0, 'stdev': 0.0, 'sem': 0.0,
-                stub+'var': 0.0, 'cv': 0.0,
-                stub+'skew': 0.0, 'kurt': 0.0,
-                stub+'p01': 0.0, stub+'p025': 0.0,
-                stub+'p05': 0.0, stub+'p25': 0.0,
-                stub+'p50': 0.0, stub+'p75': 0.0,
-                stub+'p90': 0.0, stub+'p95': 0.0,
-                stub+'p975': 0.0, stub+'p99': 0.0}
+        return {stub + 'count': group.count(), stub + 'mean': 0.0,
+                stub + 'min': 0.0, stub + 'num_gt_0': 0,
+                stub + 'max': 0.0, 'stdev': 0.0, 'sem': 0.0,
+                stub + 'var': 0.0, 'cv': 0.0,
+                stub + 'skew': 0.0, 'kurt': 0.0,
+                stub + 'p01': 0.0, stub + 'p025': 0.0,
+                stub + 'p05': 0.0, stub + 'p25': 0.0,
+                stub + 'p50': 0.0, stub + 'p75': 0.0,
+                stub + 'p90': 0.0, stub + 'p95': 0.0,
+                stub + 'p975': 0.0, stub + 'p99': 0.0}
     else:
-        return {stub+'count': group.count(), stub+'mean': group.mean(),
-                stub+'min': group.min(), stub+'num_gt_0': num_gt_0(group),
-                stub+'max': group.max(), 'stdev': group.std(), 'sem': group.sem(),
-                stub+'var': group.var(), 'cv': group.std()/group.mean(),
-                stub+'skew': group.skew(), 'kurt': group.kurt(),
-                stub+'p01': group.quantile(0.01), stub+'p025': group.quantile(0.025),
-                stub+'p05': group.quantile(0.05), stub+'p25': group.quantile(0.25),
-                stub+'p50': group.quantile(0.5), stub+'p75': group.quantile(0.75),
-                stub+'p90': group.quantile(0.9), stub+'p95': group.quantile(0.95),
-                stub+'p975': group.quantile(0.975), stub+'p99': group.quantile(0.99)}
+        return {stub + 'count': group.count(), stub + 'mean': group.mean(),
+                stub + 'min': group.min(), stub + 'num_gt_0': num_gt_0(group),
+                stub + 'max': group.max(), 'stdev': group.std(), 'sem': group.sem(),
+                stub + 'var': group.var(), 'cv': group.std() / group.mean(),
+                stub + 'skew': group.skew(), 'kurt': group.kurt(),
+                stub + 'p01': group.quantile(0.01), stub + 'p025': group.quantile(0.025),
+                stub + 'p05': group.quantile(0.05), stub + 'p25': group.quantile(0.25),
+                stub + 'p50': group.quantile(0.5), stub + 'p75': group.quantile(0.75),
+                stub + 'p90': group.quantile(0.9), stub + 'p95': group.quantile(0.95),
+                stub + 'p975': group.quantile(0.975), stub + 'p99': group.quantile(0.99)}
 
 
 def process_obsim_logs(stop_log_path, occ_stats_path, output_path,
                        run_time, warmup=0, output_file_stem='scenario_rep_stats_summary'):
+    """
+
+    Parameters
+    ----------
+    stop_log_path : Path, directory containing stop logs from obflow simulation model
+    occ_stats_path : Path, directory containing occupancy stats from obflow simulation model
+    output_path : Path, destination for the output summary files
+    run_time : float, specified run time for simulation model
+    warmup : float, time before which data is discarded for computing summary stats
+    output_file_stem : str, csv output filename without the extension
+
+    Returns
+    -------
+    No return value; writes out summary by scenario and replication to scv
+
+    """
 
     start_analysis = warmup
     end_analysis = run_time
@@ -212,8 +228,8 @@ def process_obsim_logs(stop_log_path, occ_stats_path, output_path,
         newrec['occ_p95_ldr'] = occ_stats_df.loc['LDR']['p95_occ']
         newrec['occ_p99_ldr'] = occ_stats_df.loc['LDR']['p99_occ']
         newrec['occ_min_ldr'] = occ_stats_df.loc['LDR']['min_occ']
-        newrec['occ_max_ldr'] = occ_stats_df.loc['LDR']['max_occ']        #
-        
+        newrec['occ_max_ldr'] = occ_stats_df.loc['LDR']['max_occ']  #
+
         # # PP Occupancy
         newrec['occ_mean_pp'] = occ_stats_df.loc['PP']['mean_occ']
         newrec['occ_stdev_pp'] = occ_stats_df.loc['PP']['sd_occ']
@@ -238,7 +254,7 @@ def process_obsim_logs(stop_log_path, occ_stats_path, output_path,
         newrec['occ_max_csect'] = occ_stats_df.loc['CSECT']['max_occ']
 
         newrec['pct_waitq_ldr'] = \
-            blocked_uncond_stats[('LDR', 'delay_num_gt_0')]/blocked_uncond_stats[('LDR', 'delay_count')]
+            blocked_uncond_stats[('LDR', 'delay_num_gt_0')] / blocked_uncond_stats[('LDR', 'delay_count')]
 
         if ('LDR', 'delay_mean') in blocked_cond_stats.index:
             newrec['waitq_ldr_mean'] = blocked_cond_stats[('LDR', 'delay_mean')]
@@ -248,7 +264,7 @@ def process_obsim_logs(stop_log_path, occ_stats_path, output_path,
             newrec['waitq_ldr_p95'] = 0.0
 
         newrec['pct_blocked_by_pp'] = \
-            blocked_uncond_stats[('PP', 'delay_num_gt_0')]/blocked_uncond_stats[('PP', 'delay_count')]
+            blocked_uncond_stats[('PP', 'delay_num_gt_0')] / blocked_uncond_stats[('PP', 'delay_count')]
 
         if ('PP', 'delay_mean') in blocked_cond_stats.index:
             newrec['blocked_by_pp_mean'] = blocked_cond_stats[('PP', 'delay_mean')]
@@ -267,8 +283,8 @@ def process_obsim_logs(stop_log_path, occ_stats_path, output_path,
         json_stats_path.mkdir(exist_ok=True)
 
         output_json_file = json_stats_path / f'output_stats_scenario_{scenario_num}_rep_{rep_num}.json'
-        with open(output_json_file, 'a') as json_output:
-            json_output.write(str(newrec)+'\n')
+        with open(output_json_file, 'w') as json_output:
+            json_output.write(str(newrec) + '\n')
 
     results_df = pd.DataFrame(results)
     cols = ["scenario", "rep", "timestamp", "num_days",
@@ -377,12 +393,12 @@ def qng_approx(scenario_inputs_summary):
         sim_mean_pct_blocked_by_pp = row[1]['mean_pct_blocked_by_pp']
         sim_mean_blocked_by_pp_mean = row[1]['mean_blocked_by_pp_mean']
 
-        ldr_pct_blockedby_pp = obnetwork2.prob_blockedby_pp_hat(arr_rate, pp_mean_svctime, pp_cap, pp_cv2_svctime)
-        ldr_meantime_blockedby_pp = obnetwork2.condmeantime_blockedby_pp_hat(arr_rate, pp_mean_svctime, pp_cap,
-                                                                             pp_cv2_svctime)
+        ldr_pct_blockedby_pp = obnetwork.prob_blockedby_pp_hat(arr_rate, pp_mean_svctime, pp_cap, pp_cv2_svctime)
+        ldr_meantime_blockedby_pp = obnetwork.condmeantime_blockedby_pp_hat(arr_rate, pp_mean_svctime, pp_cap,
+                                                                            pp_cv2_svctime)
         (obs_meantime_blockedbyldr, ldr_effmean_svctime, obs_prob_blockedby_ldr, obs_condmeantime_blockedbyldr) = \
-            obnetwork2.obs_blockedby_ldr_hats(arr_rate, c_sect_prob, ldr_mean_svctime, ldr_cv2_svctime, ldr_cap,
-                                              pp_mean_svctime, pp_cv2_svctime, pp_cap)
+            obnetwork.obs_blockedby_ldr_hats(arr_rate, c_sect_prob, ldr_mean_svctime, ldr_cv2_svctime, ldr_cap,
+                                             pp_mean_svctime, pp_cv2_svctime, pp_cap)
 
         scen_results = {'scenario': scenario,
                         'arr_rate': arr_rate,
@@ -459,6 +475,7 @@ def aggregate_over_reps(scen_rep_summary_path):
 
     return output_stats_summary_agg_df
 
+
 def conf_intervals(scenario_rep_summary_df):
     """Compute CIs by scenario (aggregating over replications)"""
 
@@ -485,15 +502,13 @@ def conf_intervals(scenario_rep_summary_df):
               pct_waitq_ldr_ci, waitq_ldr_mean_ci, waitq_ldr_p95_ci,
               pct_blocked_by_pp_ci, blocked_by_pp_mean_ci, blocked_by_pp_p95_ci]
 
-
-
     ci_df = pd.concat(ci_dfs)
     return ci_df
 
 
 def hyper_erlang_moment(rates, stages, probs, moment):
     terms = [probs[i - 1] * math.factorial(stages[i - 1] + moment - 1) * (1 / math.factorial(stages[i - 1] - 1)) * (
-                stages[i - 1] * rates[i - 1]) ** (-moment)
+            stages[i - 1] * rates[i - 1]) ** (-moment)
              for i in range(1, len(rates) + 1)]
 
     return sum(terms)
@@ -504,40 +519,38 @@ def create_sim_summaries(output_path, suffix,
                          scenario_inputs_path=None,
                          include_qng_approx=True,
                          ):
-
-    scenario_rep_summary_stem_ = f'scenario_rep_stats_summary{suffix}'
-    scenario_summary_stem = f'scenario_stats_summary{suffix}'
-    scenario_ci_stem = f'scenario_ci{suffix}'
+    scenario_rep_simout_stem_ = f'scenario_rep_simout_{suffix}'
+    scenario_simout_stem = f'scenario_simout_{suffix}'
+    scenario_ci_stem = f'scenario_ci_{suffix}'
 
     # Compute summary stats by scenario (aggregating over the replications)
-    scenario_rep_summary_path = output_path / f"{scenario_rep_summary_stem_}.csv"
-    scenario_rep_summary_df = pd.read_csv(scenario_rep_summary_path)
-    scenario_summary_path = output_path / f"{scenario_summary_stem}.csv"
-    scenario_summary_df = aggregate_over_reps(scenario_rep_summary_path)
-    scenario_summary_df.to_csv(scenario_summary_path, index=True)
+    scenario_rep_simout_path = output_path / f"{scenario_rep_simout_stem_}.csv"
+    scenario_rep_simout_df = pd.read_csv(scenario_rep_simout_path)
+    scenario_simout_path = output_path / f"{scenario_simout_stem}.csv"
+    scenario_simout_df = aggregate_over_reps(scenario_rep_simout_path)
+    scenario_simout_df.to_csv(scenario_simout_path, index=True)
 
-    scenario_ci_df = conf_intervals(scenario_rep_summary_df)
+    scenario_ci_df = conf_intervals(scenario_rep_simout_df)
     scenario_ci_path = output_path / f"{scenario_ci_stem}.csv"
     scenario_ci_df.to_csv(scenario_ci_path, index=True)
 
     # Merge the scenario summary with the scenario inputs
     if include_inputs:
 
-        scenario_rep_inputs_summary_stem = f'scenario_rep_inputs_summary{suffix}'
-        scenario_inputs_df = pd.read_csv(scenario_inputs_path)
-        scenario_inputs_summary_df = scenario_inputs_df.merge(scenario_summary_df, on=['scenario'])
-        scenario_rep_summary_df = pd.read_csv(scenario_rep_summary_path)
-        scenario_rep_inputs_summary_df = scenario_rep_summary_df.merge(scenario_inputs_df, on=['scenario'])
-        scenario_rep_inputs_summary_path = output_path / f"{scenario_rep_inputs_summary_stem}.csv"
-        scenario_rep_inputs_summary_df.to_csv(scenario_rep_inputs_summary_path, index=False)
+        scenario_rep_siminout_stem = f'scenario_rep_siminout_{suffix}'
+        scenario_simin_df = pd.read_csv(scenario_inputs_path)
+        scenario_siminout_df = scenario_simin_df.merge(scenario_simout_df, on=['scenario'])
+        scenario_rep_siminout_df = scenario_rep_simout_df.merge(scenario_simin_df, on=['scenario'])
+        scenario_rep_siminout_path = output_path / f"{scenario_rep_siminout_stem}.csv"
+        scenario_rep_siminout_df.to_csv(scenario_rep_siminout_path, index=False)
 
         # Using the scenario summary we just created
         if include_qng_approx:
-            scenario_inputs_summary_qng_stem = f'scenario_inputs_summary_qng{suffix}'
-            qng_approx_df = qng_approx(scenario_inputs_summary_df)
-            scenario_inputs_summary_qng_df = scenario_inputs_summary_df.merge(qng_approx_df, on=['scenario'])
-            scenario_inputs_summary_qng_path = output_path / f"{scenario_inputs_summary_qng_stem}.csv"
-            scenario_inputs_summary_qng_df.to_csv(scenario_inputs_summary_qng_path, index=False)
+            scenario_siminout_qng_stem = f'scenario_siminout_qng_{suffix}'
+            qng_approx_df = qng_approx(scenario_siminout_df)
+            scenario_siminout_qng_df = scenario_siminout_df.merge(qng_approx_df, on=['scenario'])
+            scenario_siminout_qng_path = output_path / f"{scenario_siminout_qng_stem}.csv"
+            scenario_siminout_qng_df.to_csv(scenario_siminout_qng_path, index=False)
 
 
 def process_command_line():
@@ -550,12 +563,12 @@ def process_command_line():
 
     # Create the parser
     parser = argparse.ArgumentParser(prog='obflow_6_output',
-                                     description='Run inpatient OB simulation')
+                                     description='Run inpatient OB simulation output processor')
 
     # Add arguments
     parser.add_argument(
         "output_path", type=str,
-        help="Path for output summary files"
+        help="Destination Path for output summary files"
     )
 
     parser.add_argument(
@@ -632,7 +645,7 @@ if __name__ == '__main__':
 
     if inputs.process_logs:
         # From the patient stop logs, compute summary stats by scenario by replication
-        scenario_rep_summary_stem = f'scenario_rep_stats_summary{inputs.suffix}'
+        scenario_rep_summary_stem = f'scenario_rep_simout_{inputs.suffix}'
 
         process_obsim_logs(Path(inputs.stop_log_path), Path(inputs.occ_stats_path),
                            Path(inputs.output_path), inputs.run_time, warmup=inputs.warmup_time,
@@ -642,5 +655,3 @@ if __name__ == '__main__':
                          include_inputs=inputs.include_inputs,
                          scenario_inputs_path=inputs.scenario_inputs_path,
                          include_qng_approx=inputs.include_qng_approx)
-
-
