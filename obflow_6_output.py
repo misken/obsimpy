@@ -365,62 +365,67 @@ def output_header(msg, line_len, scenario, rep_num):
     return header
 
 
-def qng_approx(scenario_inputs_summary):
-    results = []
-
-    for row in scenario_inputs_summary.iterrows():
-        scenario = row[1]['scenario']
-        arr_rate = row[1]['arrival_rate']
-        c_sect_prob = row[1]['c_sect_prob']
-        ldr_mean_svctime = row[1]['mean_los_ldr']
-        ldr_cv2_svctime = 1 / row[1]['num_erlang_stages_ldr']
-        ldr_cap = row[1]['cap_ldr']
-        pp_mean_svctime = c_sect_prob * row[1]['mean_los_pp_c'] + (1 - c_sect_prob) * row[1]['mean_los_pp_noc']
-
-        rates = [1 / row[1]['mean_los_pp_c'], 1 / row[1]['mean_los_pp_noc']]
-        probs = [c_sect_prob, 1 - c_sect_prob]
-        stages = [int(row[1]['num_erlang_stages_pp']), int(row[1]['num_erlang_stages_pp'])]
-        moments = [hyper_erlang_moment(rates, stages, probs, moment) for moment in [1, 2]]
-        variance = moments[1] - moments[0] ** 2
-        cv2 = variance / moments[0] ** 2
-
-        pp_cv2_svctime = cv2
-
-        pp_cap = row[1]['cap_pp']
-        sim_mean_waitq_ldr_mean = row[1]['mean_waitq_ldr_mean']
-        sim_mean_pct_waitq_ldr = row[1]['mean_pct_waitq_ldr']
-        sim_actual_los_mean_mean_ldr = row[1]['actual_los_mean_mean_ldr']
-        sim_mean_pct_blocked_by_pp = row[1]['mean_pct_blocked_by_pp']
-        sim_mean_blocked_by_pp_mean = row[1]['mean_blocked_by_pp_mean']
-
-        ldr_pct_blockedby_pp = obnetwork.prob_blockedby_pp_hat(arr_rate, pp_mean_svctime, pp_cap, pp_cv2_svctime)
-        ldr_meantime_blockedby_pp = obnetwork.condmeantime_blockedby_pp_hat(arr_rate, pp_mean_svctime, pp_cap,
-                                                                            pp_cv2_svctime)
-        (obs_meantime_blockedbyldr, ldr_effmean_svctime, obs_prob_blockedby_ldr, obs_condmeantime_blockedbyldr) = \
-            obnetwork.obs_blockedby_ldr_hats(arr_rate, c_sect_prob, ldr_mean_svctime, ldr_cv2_svctime, ldr_cap,
-                                             pp_mean_svctime, pp_cv2_svctime, pp_cap)
-
-        scen_results = {'scenario': scenario,
-                        'arr_rate': arr_rate,
-                        'prob_blockedby_ldr_approx': obs_prob_blockedby_ldr,
-                        'prob_blockedby_ldr_sim': sim_mean_pct_waitq_ldr,
-
-                        'condmeantime_blockedbyldr_approx': obs_condmeantime_blockedbyldr,
-                        'condmeantime_blockedbyldr_sim': sim_mean_waitq_ldr_mean,
-                        'ldr_effmean_svctime_approx': ldr_effmean_svctime,
-                        'ldr_effmean_svctime_sim': sim_actual_los_mean_mean_ldr,
-                        'prob_blockedby_pp_approx': ldr_pct_blockedby_pp,
-                        'prob_blockedby_pp_sim': sim_mean_pct_blocked_by_pp,
-                        'condmeantime_blockedbypp_approx': ldr_meantime_blockedby_pp,
-                        'condmeantime_blockedbypp_sim': sim_mean_blocked_by_pp_mean}
-
-        results.append(scen_results)
-
-        # print("scenario {}\n".format(scenario))
-        # print(results)
-
-    results_df = pd.DataFrame(results)
-    return results_df
+# def qng_approx(scenario_inputs_summary):
+#     results = []
+#
+#     for row in scenario_inputs_summary.iterrows():
+#         scenario = row[1]['scenario']
+#         arr_rate = row[1]['arrival_rate']
+#         c_sect_prob = row[1]['c_sect_prob']
+#         ldr_mean_svctime = row[1]['mean_los_ldr']
+#         ldr_cv2_svctime = 1 / row[1]['num_erlang_stages_ldr']
+#         ldr_cap = row[1]['cap_ldr']
+#         pp_mean_svctime = c_sect_prob * row[1]['mean_los_pp_c'] + (1 - c_sect_prob) * row[1]['mean_los_pp_noc']
+#
+#         rates = [1 / row[1]['mean_los_pp_c'], 1 / row[1]['mean_los_pp_noc']]
+#         probs = [c_sect_prob, 1 - c_sect_prob]
+#         stages = [int(row[1]['num_erlang_stages_pp']), int(row[1]['num_erlang_stages_pp'])]
+#         moments = [hyper_erlang_moment(rates, stages, probs, moment) for moment in [1, 2]]
+#         variance = moments[1] - moments[0] ** 2
+#         cv2 = variance / moments[0] ** 2
+#
+#         pp_cv2_svctime = cv2
+#
+#         pp_cap = row[1]['cap_pp']
+#         sim_mean_waitq_ldr_mean = row[1]['mean_waitq_ldr_mean']
+#         sim_mean_pct_waitq_ldr = row[1]['mean_pct_waitq_ldr']
+#         sim_actual_los_mean_mean_ldr = row[1]['actual_los_mean_mean_ldr']
+#         sim_mean_pct_blocked_by_pp = row[1]['mean_pct_blocked_by_pp']
+#         sim_mean_blocked_by_pp_mean = row[1]['mean_blocked_by_pp_mean']
+#
+#         ldr_pct_blockedby_pp = obnetwork.prob_blockedby_pp_hat(arr_rate, pp_mean_svctime, pp_cap, pp_cv2_svctime)
+#         ldr_meantime_blockedby_pp = obnetwork.condmeantime_blockedby_pp_hat(arr_rate, pp_mean_svctime, pp_cap,
+#                                                                             pp_cv2_svctime)
+#         (obs_meantime_blockedbyldr, ldr_effmean_svctime, obs_prob_blockedby_ldr, obs_condmeantime_blockedbyldr) = \
+#             obnetwork.obs_blockedby_ldr_hats(arr_rate, c_sect_prob, ldr_mean_svctime, ldr_cv2_svctime, ldr_cap,
+#                                              pp_mean_svctime, pp_cv2_svctime, pp_cap)
+#
+#         ldr_eff_load = arr_rate * ldr_effmean_svctime
+#         ldr_eff_sqrtload = (arr_rate * ldr_effmean_svctime) ** 0.5
+#
+#         scen_results = {'scenario': scenario,
+#                         'arr_rate': arr_rate,
+#                         'prob_blockedby_ldr_approx': obs_prob_blockedby_ldr,
+#                         'prob_blockedby_ldr_sim': sim_mean_pct_waitq_ldr,
+#
+#                         'condmeantime_blockedbyldr_approx': obs_condmeantime_blockedbyldr,
+#                         'condmeantime_blockedbyldr_sim': sim_mean_waitq_ldr_mean,
+#                         'ldr_effmean_svctime_approx': ldr_effmean_svctime,
+#                         'ldr_effmean_svctime_sim': sim_actual_los_mean_mean_ldr,
+#                         'prob_blockedby_pp_approx': ldr_pct_blockedby_pp,
+#                         'prob_blockedby_pp_sim': sim_mean_pct_blocked_by_pp,
+#                         'condmeantime_blockedbypp_approx': ldr_meantime_blockedby_pp,
+#                         'condmeantime_blockedbypp_sim': sim_mean_blocked_by_pp_mean,
+#                         'ldr_eff_load': ldr_eff_load,
+#                         'ldr_eff_sqrtload': ldr_eff_sqrtload}
+#
+#         results.append(scen_results)
+#
+#         # print("scenario {}\n".format(scenario))
+#         # print(results)
+#
+#     results_df = pd.DataFrame(results)
+#     return results_df
 
 
 def aggregate_over_reps(scen_rep_summary_path):
@@ -464,13 +469,13 @@ def aggregate_over_reps(scen_rep_summary_path):
         occ_mean_p95_csect=pd.NamedAgg(column='occ_p95_csect', aggfunc='mean'),
         occ_mean_p95_pp=pd.NamedAgg(column='occ_p95_pp', aggfunc='mean'),
 
-        mean_pct_waitq_ldr=pd.NamedAgg(column='pct_waitq_ldr', aggfunc='mean'),
-        mean_waitq_ldr_mean=pd.NamedAgg(column='waitq_ldr_mean', aggfunc='mean'),
-        mean_waitq_ldr_p95=pd.NamedAgg(column='waitq_ldr_p95', aggfunc='mean'),
+        prob_blockedby_ldr=pd.NamedAgg(column='pct_waitq_ldr', aggfunc='mean'),
+        condmeantime_blockedby_ldr=pd.NamedAgg(column='waitq_ldr_mean', aggfunc='mean'),
+        condp95time_blockedby_ldr=pd.NamedAgg(column='waitq_ldr_p95', aggfunc='mean'),
 
-        mean_pct_blocked_by_pp=pd.NamedAgg(column='pct_waitq_ldr', aggfunc='mean'),
-        mean_blocked_by_pp_mean=pd.NamedAgg(column='blocked_by_pp_mean', aggfunc='mean'),
-        mean_blocked_by_pp_p95=pd.NamedAgg(column='blocked_by_pp_p95', aggfunc='mean'),
+        prob_blockedby_pp=pd.NamedAgg(column='pct_blocked_by_pp', aggfunc='mean'),
+        condmeantime_blockedby_pp=pd.NamedAgg(column='blocked_by_pp_mean', aggfunc='mean'),
+        condp95time_blockedby_pp=pd.NamedAgg(column='blocked_by_pp_p95', aggfunc='mean'),
     )
 
     return output_stats_summary_agg_df
@@ -506,12 +511,12 @@ def conf_intervals(scenario_rep_summary_df):
     return ci_df
 
 
-def hyper_erlang_moment(rates, stages, probs, moment):
-    terms = [probs[i - 1] * math.factorial(stages[i - 1] + moment - 1) * (1 / math.factorial(stages[i - 1] - 1)) * (
-            stages[i - 1] * rates[i - 1]) ** (-moment)
-             for i in range(1, len(rates) + 1)]
-
-    return sum(terms)
+# def hyper_erlang_moment(rates, stages, probs, moment):
+#     terms = [probs[i - 1] * math.factorial(stages[i - 1] + moment - 1) * (1 / math.factorial(stages[i - 1] - 1)) * (
+#             stages[i - 1] * rates[i - 1]) ** (-moment)
+#              for i in range(1, len(rates) + 1)]
+#
+#     return sum(terms)
 
 
 def create_sim_summaries(output_path, suffix,
@@ -521,12 +526,14 @@ def create_sim_summaries(output_path, suffix,
                          ):
     scenario_rep_simout_stem_ = f'scenario_rep_simout_{suffix}'
     scenario_simout_stem = f'scenario_simout_{suffix}'
+    scenario_siminout_stem = f'scenario_siminout_{suffix}'
     scenario_ci_stem = f'scenario_ci_{suffix}'
 
     # Compute summary stats by scenario (aggregating over the replications)
     scenario_rep_simout_path = output_path / f"{scenario_rep_simout_stem_}.csv"
     scenario_rep_simout_df = pd.read_csv(scenario_rep_simout_path)
     scenario_simout_path = output_path / f"{scenario_simout_stem}.csv"
+    scenario_siminout_path = output_path / f"{scenario_siminout_stem}.csv"
     scenario_simout_df = aggregate_over_reps(scenario_rep_simout_path)
     scenario_simout_df.to_csv(scenario_simout_path, index=True)
 
@@ -540,17 +547,19 @@ def create_sim_summaries(output_path, suffix,
         scenario_rep_siminout_stem = f'scenario_rep_siminout_{suffix}'
         scenario_simin_df = pd.read_csv(scenario_inputs_path)
         scenario_siminout_df = scenario_simin_df.merge(scenario_simout_df, on=['scenario'])
+        scenario_siminout_df.to_csv(scenario_siminout_path, index=False)
+
         scenario_rep_siminout_df = scenario_rep_simout_df.merge(scenario_simin_df, on=['scenario'])
         scenario_rep_siminout_path = output_path / f"{scenario_rep_siminout_stem}.csv"
         scenario_rep_siminout_df.to_csv(scenario_rep_siminout_path, index=False)
 
         # Using the scenario summary we just created
-        if include_qng_approx:
-            scenario_siminout_qng_stem = f'scenario_siminout_qng_{suffix}'
-            qng_approx_df = qng_approx(scenario_siminout_df)
-            scenario_siminout_qng_df = scenario_siminout_df.merge(qng_approx_df, on=['scenario'])
-            scenario_siminout_qng_path = output_path / f"{scenario_siminout_qng_stem}.csv"
-            scenario_siminout_qng_df.to_csv(scenario_siminout_qng_path, index=False)
+        # if include_qng_approx:
+        #     scenario_siminout_qng_stem = f'scenario_siminout_qng_{suffix}'
+        #     qng_approx_df = qng_approx(scenario_siminout_df)
+        #     scenario_siminout_qng_df = scenario_siminout_df.merge(qng_approx_df, on=['scenario'])
+        #     scenario_siminout_qng_path = output_path / f"{scenario_siminout_qng_stem}.csv"
+        #     scenario_siminout_qng_df.to_csv(scenario_siminout_qng_path, index=False)
 
 
 def process_command_line():
@@ -601,7 +610,7 @@ def process_command_line():
         "--scenario_inputs_path", type=str, default=None,
         help="Filename for scenario inputs"
     )
-    parser.add_argument('--include_qng_approx', dest='include_qng_approx', action='store_true')
+    #parser.add_argument('--include_qng_approx', dest='include_qng_approx', action='store_true')
 
     # do the parsing
     args = parser.parse_args()
@@ -653,5 +662,4 @@ if __name__ == '__main__':
 
     create_sim_summaries(Path(inputs.output_path), inputs.suffix,
                          include_inputs=inputs.include_inputs,
-                         scenario_inputs_path=inputs.scenario_inputs_path,
-                         include_qng_approx=inputs.include_qng_approx)
+                         scenario_inputs_path=inputs.scenario_inputs_path)

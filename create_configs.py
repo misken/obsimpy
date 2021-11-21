@@ -67,9 +67,9 @@ def config_from_csv(scenarios_csv_path_, settings_path_, config_path_, bat_path_
 
 
 if __name__ == '__main__':
-    scenarios_csv_path = Path('input/exp10_obflow06_metainputs.csv')
-    settings_path = Path('input/exp11_obflow06_settings.yaml')
-    config_path = Path('input/config/exp11')
-    bat_path = Path('./run') / 'exp11_obflow06_run.sh'
+    scenarios_csv_path = Path('input/exp11b_obflow06_metainputs.csv')
+    settings_path = Path('input/exp11b_obflow06_settings.yaml')
+    config_path = Path('input/config/exp11b')
+    bat_path = Path('./run') / 'exp11b_obflow06_run.sh'
 
     config_from_csv(scenarios_csv_path, settings_path, config_path, bat_path)
