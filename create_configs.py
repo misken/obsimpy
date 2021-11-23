@@ -5,7 +5,7 @@ import numpy as np
 import yaml
 
 
-def config_from_csv(scenarios_csv_path_, settings_path_, config_path_, bat_path_):
+def config_from_csv(exp_suffix_, scenarios_csv_path_, settings_path_, config_path_, output_path_, bat_path_):
 
     # Read scenarios file in DataFrame
     scenarios_df = pd.read_csv(scenarios_csv_path_)
@@ -65,11 +65,22 @@ def config_from_csv(scenarios_csv_path_, settings_path_, config_path_, bat_path_
             run_line = f"python obflow_6.py {config_file_path} --loglevel=WARNING\n"
             bat_file.write(run_line)
 
+        # Create output file processing line
+        output_proc_line = f'python obflow_6_output.py {output_path_} {exp_suffix_} '
+        output_proc_line += f"--run_time {settings['run_settings']['run_time']} "
+        output_proc_line += f"--warmup_time {settings['run_settings']['warmup_time']} --include_inputs "
+        output_proc_line += f"--scenario_inputs_path {scenarios_csv_path_} --process_logs "
+        output_proc_line += f"--stop_log_path {settings['paths']['stop_logs']} "
+        output_proc_line += f"--occ_stats_path {settings['paths']['occ_stats']}"
+        bat_file.write(output_proc_line)
+
 
 if __name__ == '__main__':
-    scenarios_csv_path = Path('input/exp11b_obflow06_metainputs.csv')
-    settings_path = Path('input/exp11b_obflow06_settings.yaml')
-    config_path = Path('input/config/exp11b')
-    bat_path = Path('./run') / 'exp11b_obflow06_run.sh'
+    exp_suffix = 'exp11d'
+    scenarios_csv_path = Path(f'input/{exp_suffix}_obflow06_metainputs.csv')
+    settings_path = Path(f'input/{exp_suffix}_obflow06_settings.yaml')
+    config_path = Path(f'input/config/{exp_suffix}')
+    bat_path = Path('./run') / f'{exp_suffix}_obflow06_run.sh'
+    output_path = Path('./output') / f'{exp_suffix}/'
 
-    config_from_csv(scenarios_csv_path, settings_path, config_path, bat_path)
+    config_from_csv(exp_suffix, scenarios_csv_path, settings_path, config_path, output_path, bat_path)
