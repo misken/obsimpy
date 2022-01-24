@@ -42,7 +42,8 @@ def get_stats(group, stub=''):
 
 
 def process_obsim_logs(stop_log_path, occ_stats_path, output_path,
-                       run_time, warmup=0, output_file_stem='scenario_rep_stats_summary'):
+                       run_time, units=('OBS', 'LDR', 'CSECT', 'PP'), 
+                       warmup=0, output_file_stem='scenario_rep_stats_summary'):
     """
 
     Parameters
@@ -51,6 +52,7 @@ def process_obsim_logs(stop_log_path, occ_stats_path, output_path,
     occ_stats_path : Path, directory containing occupancy stats from obflow simulation model
     output_path : Path, destination for the output summary files
     run_time : float, specified run time for simulation model
+    units : tuple of str, unit names for which to compute stats
     warmup : float, time before which data is discarded for computing summary stats
     output_file_stem : str, csv output filename without the extension
 
@@ -67,6 +69,7 @@ def process_obsim_logs(stop_log_path, occ_stats_path, output_path,
     rx = re.compile(r'_scenario_([0-9]{1,4})_rep_([0-9]{1,4})')
 
     results = []
+    active_units = []
 
     for log_fn in stop_log_path.glob('unit_stop_log*.csv'):
         # Get scenario and rep numbers from filename
@@ -104,154 +107,60 @@ def process_obsim_logs(stop_log_path, occ_stats_path, output_path,
 
         newrec['rep'] = rep_num
         newrec['num_days'] = num_days
+        
+        # Number of visits to each unit
+        for unit in units:
+            if (unit, 'delay_count') in blocked_cond_stats.index:
+                newrec[f'num_visits_{unit.lower()}'] = blocked_uncond_stats[(unit, 'delay_count')]
+            else:
+                newrec[f'num_visits_{unit.lower()}'] = 0
 
-        newrec['num_visits_obs'] = blocked_uncond_stats[('OBS', 'delay_count')]
-        newrec['num_visits_ldr'] = blocked_uncond_stats[('LDR', 'delay_count')]
-        newrec['num_visits_pp'] = blocked_uncond_stats[('PP', 'delay_count')]
-        newrec['num_visits_csect'] = blocked_uncond_stats[('CSECT', 'delay_count')]
+        # LOS stats for each unit
+        for unit in units:
+            if newrec[f'num_visits_{unit.lower()}'] > 0:
+                active_units.append(unit)
 
-        # OBS LOS
-        newrec['planned_los_mean_obs'] = plos_mean['OBS']
-        newrec['actual_los_mean_obs'] = actlos_mean['OBS']
-        newrec['planned_los_sd_obs'] = plos_sd['OBS']
-        newrec['actual_los_sd_obs'] = actlos_sd['OBS']
+                newrec[f'planned_los_mean_{unit.lower()}'] = plos_mean[unit]
+                newrec[f'actual_los_mean_{unit.lower()}'] = actlos_mean[unit]
+                newrec[f'planned_los_sd_{unit.lower()}'] = plos_sd[unit]
+                newrec[f'actual_los_sd_{unit.lower()}'] = actlos_sd[unit]
+        
+                newrec[f'planned_los_cv2_{unit.lower()}'] = (plos_sd[unit] / plos_mean[unit]) ** 2
+                newrec[f'actual_los_cv2_{unit.lower()}'] = (actlos_sd[unit] / actlos_mean[unit]) ** 2
+        
+                newrec[f'planned_los_skew_{unit.lower()}'] = plos_skew[unit]
+                newrec[f'actual_los_skew_{unit.lower()}'] = actlos_skew[unit]
+                newrec[f'planned_los_kurt_{unit.lower()}'] = plos_kurt[unit]
+                newrec[f'actual_los_kurt_{unit.lower()}'] = actlos_kurt[unit]
 
-        newrec['planned_los_cv2_obs'] = (plos_sd['OBS'] / plos_mean['OBS']) ** 2
-        newrec['actual_los_cv2_obs'] = (actlos_sd['OBS'] / actlos_mean['OBS']) ** 2
+        # Interarrival time stats for each unit
+        for unit in units:
+            if newrec[f'num_visits_{unit.lower()}'] > 0:
+                arrtimes_unit = stops_df.loc[stops_df.unit == unit, 'request_entry_ts']
+                # Make sure arrival times are sorted to compute interarrival times
+                arrtimes_unit.sort_values(inplace=True)
+                iatimes_unit = arrtimes_unit.diff(1)[1:]
 
-        newrec['planned_los_skew_obs'] = plos_skew['OBS']
-        newrec['actual_los_skew_obs'] = actlos_skew['OBS']
-        newrec['planned_los_kurt_obs'] = plos_kurt['OBS']
-        newrec['actual_los_kurt_obs'] = actlos_kurt['OBS']
-
-        # LDR LOS
-        newrec['planned_los_mean_ldr'] = plos_mean['LDR']
-        newrec['actual_los_mean_ldr'] = actlos_mean['LDR']
-        newrec['planned_los_sd_ldr'] = plos_sd['LDR']
-        newrec['actual_los_sd_ldr'] = actlos_sd['LDR']
-
-        newrec['planned_los_cv2_ldr'] = (plos_sd['LDR'] / plos_mean['LDR']) ** 2
-        newrec['actual_los_cv2_ldr'] = (actlos_sd['LDR'] / actlos_mean['LDR']) ** 2
-
-        newrec['planned_los_skew_ldr'] = plos_skew['LDR']
-        newrec['actual_los_skew_ldr'] = actlos_skew['LDR']
-        newrec['planned_los_kurt_ldr'] = plos_kurt['LDR']
-        newrec['actual_los_kurt_ldr'] = actlos_kurt['LDR']
-
-        # PP LOS
-        newrec['planned_los_mean_pp'] = plos_mean['PP']
-        newrec['actual_los_mean_pp'] = actlos_mean['PP']
-        newrec['planned_los_sd_pp'] = plos_sd['PP']
-        newrec['actual_los_sd_pp'] = actlos_sd['PP']
-
-        newrec['planned_los_cv2_pp'] = (plos_sd['PP'] / plos_mean['PP']) ** 2
-        newrec['actual_los_cv2_pp'] = (actlos_sd['PP'] / actlos_mean['PP']) ** 2
-
-        newrec['planned_los_skew_pp'] = plos_skew['PP']
-        newrec['actual_los_skew_pp'] = actlos_skew['PP']
-        newrec['planned_los_kurt_pp'] = plos_kurt['PP']
-        newrec['actual_los_kurt_pp'] = actlos_kurt['PP']
-
-        # CSECT LOS
-        newrec['planned_los_mean_csect'] = plos_mean['CSECT']
-        newrec['actual_los_mean_csect'] = actlos_mean['CSECT']
-        newrec['planned_los_sd_csect'] = plos_sd['CSECT']
-        newrec['actual_los_sd_csect'] = actlos_sd['CSECT']
-
-        newrec['planned_los_cv2_csect'] = (plos_sd['CSECT'] / plos_mean['CSECT']) ** 2
-        newrec['actual_los_cv2_csect'] = (actlos_sd['CSECT'] / actlos_mean['CSECT']) ** 2
-
-        newrec['planned_los_skew_csect'] = plos_skew['CSECT']
-        newrec['actual_los_skew_csect'] = actlos_skew['CSECT']
-        newrec['planned_los_kurt_csect'] = plos_kurt['CSECT']
-        newrec['actual_los_kurt_csect'] = actlos_kurt['CSECT']
-
-        # Interarrival time stats
-        arrtimes_obs = stops_df.loc[stops_df.unit == 'OBS', 'request_entry_ts']
-        arrtimes_ldr = stops_df.loc[stops_df.unit == 'LDR', 'request_entry_ts']
-        arrtimes_csection = stops_df.loc[stops_df.unit == 'CSECT', 'request_entry_ts']
-        arrtimes_pp = stops_df.loc[stops_df.unit == 'PP', 'request_entry_ts']
-
-        # Make sure arrival times are sorted to compute interarrival times
-        arrtimes_obs.sort_values(inplace=True)
-        arrtimes_ldr.sort_values(inplace=True)
-        arrtimes_csection.sort_values(inplace=True)
-        arrtimes_pp.sort_values(inplace=True)
-
-        iatimes_obs = arrtimes_obs.diff(1)[1:]
-        iatimes_ldr = arrtimes_ldr.diff(1)[1:]
-        iatimes_csection = arrtimes_csection.diff(1)[1:]
-        iatimes_pp = arrtimes_pp.diff(1)[1:]
-
-        # IA time stats
-        newrec['iatime_mean_obs'] = iatimes_obs.mean()
-        newrec['iatime_sd_obs'] = iatimes_obs.std()
-        newrec['iatime_skew_obs'] = iatimes_obs.skew()
-        newrec['iatime_kurt_obs'] = iatimes_obs.kurtosis()
-
-        newrec['iatime_mean_ldr'] = iatimes_ldr.mean()
-        newrec['iatime_sd_ldr'] = iatimes_ldr.std()
-        newrec['iatime_skew_ldr'] = iatimes_ldr.skew()
-        newrec['iatime_kurt_ldr'] = iatimes_ldr.kurtosis()
-
-        newrec['iatime_mean_csection'] = iatimes_csection.mean()
-        newrec['iatime_sd_csection'] = iatimes_csection.std()
-        newrec['iatime_skew_csection'] = iatimes_csection.skew()
-        newrec['iatime_kurt_csection'] = iatimes_csection.kurtosis()
-
-        newrec['iatime_mean_pp'] = iatimes_pp.mean()
-        newrec['iatime_sd_pp'] = iatimes_pp.std()
-        newrec['iatime_skew_pp'] = iatimes_pp.skew()
-        newrec['iatime_kurt_pp'] = iatimes_pp.kurtosis()
+                newrec[f'iatime_mean_{unit.lower()}'] = iatimes_unit.mean()
+                newrec[f'iatime_sd_{unit.lower()}'] = iatimes_unit.std()
+                newrec[f'iatime_skew_{unit.lower()}'] = iatimes_unit.skew()
+                newrec[f'iatime_kurt_{unit.lower()}'] = iatimes_unit.kurtosis()
 
         # Get occ from occ stats summaries
         occ_stats_fn = Path(occ_stats_path) / f"unit_occ_stats_scenario_{scenario_num}_rep_{rep_num}.csv"
         occ_stats_df = pd.read_csv(occ_stats_fn, index_col=0)
-
-        newrec['occ_mean_obs'] = occ_stats_df.loc['OBS']['mean_occ']
-        newrec['occ_stdev_obs'] = occ_stats_df.loc['OBS']['sd_occ']
-        newrec['occ_p05_obs'] = occ_stats_df.loc['OBS']['p05_occ']
-        newrec['occ_p25_obs'] = occ_stats_df.loc['OBS']['p25_occ']
-        newrec['occ_p50_obs'] = occ_stats_df.loc['OBS']['p50_occ']
-        newrec['occ_p75_obs'] = occ_stats_df.loc['OBS']['p75_occ']
-        newrec['occ_p95_obs'] = occ_stats_df.loc['OBS']['p95_occ']
-        newrec['occ_p99_obs'] = occ_stats_df.loc['OBS']['p99_occ']
-        newrec['occ_min_obs'] = occ_stats_df.loc['OBS']['min_occ']
-        newrec['occ_max_obs'] = occ_stats_df.loc['OBS']['max_occ']
-
-        newrec['occ_mean_ldr'] = occ_stats_df.loc['LDR']['mean_occ']
-        newrec['occ_stdev_ldr'] = occ_stats_df.loc['LDR']['sd_occ']
-        newrec['occ_p05_ldr'] = occ_stats_df.loc['LDR']['p05_occ']
-        newrec['occ_p25_ldr'] = occ_stats_df.loc['LDR']['p25_occ']
-        newrec['occ_p50_ldr'] = occ_stats_df.loc['LDR']['p50_occ']
-        newrec['occ_p75_ldr'] = occ_stats_df.loc['LDR']['p75_occ']
-        newrec['occ_p95_ldr'] = occ_stats_df.loc['LDR']['p95_occ']
-        newrec['occ_p99_ldr'] = occ_stats_df.loc['LDR']['p99_occ']
-        newrec['occ_min_ldr'] = occ_stats_df.loc['LDR']['min_occ']
-        newrec['occ_max_ldr'] = occ_stats_df.loc['LDR']['max_occ']  #
-
-        # # PP Occupancy
-        newrec['occ_mean_pp'] = occ_stats_df.loc['PP']['mean_occ']
-        newrec['occ_stdev_pp'] = occ_stats_df.loc['PP']['sd_occ']
-        newrec['occ_p05_pp'] = occ_stats_df.loc['PP']['p05_occ']
-        newrec['occ_p25_pp'] = occ_stats_df.loc['PP']['p25_occ']
-        newrec['occ_p50_pp'] = occ_stats_df.loc['PP']['p50_occ']
-        newrec['occ_p75_pp'] = occ_stats_df.loc['PP']['p75_occ']
-        newrec['occ_p95_pp'] = occ_stats_df.loc['PP']['p95_occ']
-        newrec['occ_p99_pp'] = occ_stats_df.loc['PP']['p99_occ']
-        newrec['occ_min_pp'] = occ_stats_df.loc['PP']['min_occ']
-        newrec['occ_max_pp'] = occ_stats_df.loc['PP']['max_occ']
-
-        newrec['occ_mean_csect'] = occ_stats_df.loc['CSECT']['mean_occ']
-        newrec['occ_stdev_csect'] = occ_stats_df.loc['CSECT']['sd_occ']
-        newrec['occ_p05_csect'] = occ_stats_df.loc['CSECT']['p05_occ']
-        newrec['occ_p25_csect'] = occ_stats_df.loc['CSECT']['p25_occ']
-        newrec['occ_p50_csect'] = occ_stats_df.loc['CSECT']['p50_occ']
-        newrec['occ_p75_csect'] = occ_stats_df.loc['CSECT']['p75_occ']
-        newrec['occ_p95_csect'] = occ_stats_df.loc['CSECT']['p95_occ']
-        newrec['occ_p99_csect'] = occ_stats_df.loc['CSECT']['p99_occ']
-        newrec['occ_min_csect'] = occ_stats_df.loc['CSECT']['min_occ']
-        newrec['occ_max_csect'] = occ_stats_df.loc['CSECT']['max_occ']
+        for unit in units:
+            if newrec[f'num_visits_{unit.lower()}'] > 0:
+                newrec[f'occ_mean_{unit.lower()}'] = occ_stats_df.loc[unit]['mean_occ']
+                newrec[f'occ_stdev_{unit.lower()}'] = occ_stats_df.loc[unit]['sd_occ']
+                newrec[f'occ_p05_{unit.lower()}'] = occ_stats_df.loc[unit]['p05_occ']
+                newrec[f'occ_p25_{unit.lower()}'] = occ_stats_df.loc[unit]['p25_occ']
+                newrec[f'occ_p50_{unit.lower()}'] = occ_stats_df.loc[unit]['p50_occ']
+                newrec[f'occ_p75_{unit.lower()}'] = occ_stats_df.loc[unit]['p75_occ']
+                newrec[f'occ_p95_{unit.lower()}'] = occ_stats_df.loc[unit]['p95_occ']
+                newrec[f'occ_p99_{unit.lower()}'] = occ_stats_df.loc[unit]['p99_occ']
+                newrec[f'occ_min_{unit.lower()}'] = occ_stats_df.loc[unit]['min_occ']
+                newrec[f'occ_max_{unit.lower()}'] = occ_stats_df.loc[unit]['max_occ']
 
         newrec['pct_waitq_ldr'] = \
             blocked_uncond_stats[('LDR', 'delay_num_gt_0')] / blocked_uncond_stats[('LDR', 'delay_count')]
@@ -287,33 +196,35 @@ def process_obsim_logs(stop_log_path, occ_stats_path, output_path,
             json_output.write(str(newrec) + '\n')
 
     results_df = pd.DataFrame(results)
-    cols = ["scenario", "rep", "timestamp", "num_days",
-            "num_visits_obs", "num_visits_ldr", "num_visits_pp", "num_visits_csect",
-            "planned_los_mean_obs", "actual_los_mean_obs", "planned_los_sd_obs", "actual_los_sd_obs",
-            "planned_los_cv2_obs", "actual_los_cv2_obs",
-            "planned_los_skew_obs", "actual_los_skew_obs", "planned_los_kurt_obs", "actual_los_kurt_obs",
-            "planned_los_mean_ldr", "actual_los_mean_ldr", "planned_los_sd_ldr", "actual_los_sd_ldr",
-            "planned_los_cv2_ldr", "actual_los_cv2_ldr",
-            "planned_los_skew_ldr", "actual_los_skew_ldr", "planned_los_kurt_ldr", "actual_los_kurt_ldr",
-            "planned_los_mean_pp", "actual_los_mean_pp", "planned_los_sd_pp", "actual_los_sd_pp",
-            "planned_los_cv2_pp", "actual_los_cv2_pp",
-            "planned_los_skew_pp", "actual_los_skew_pp", "planned_los_kurt_pp", "actual_los_kurt_pp",
-            "planned_los_mean_csect", "actual_los_mean_csect", "planned_los_sd_csect", "actual_los_sd_csect",
-            "planned_los_cv2_csect", "actual_los_cv2_csect",
-            "planned_los_skew_csect", "actual_los_skew_csect", "planned_los_kurt_csect", "actual_los_kurt_csect",
-            "iatime_mean_obs", "iatime_sd_obs", "iatime_skew_obs", "iatime_kurt_obs",
-            "iatime_mean_ldr", "iatime_sd_ldr", "iatime_skew_ldr", "iatime_kurt_ldr",
-            "iatime_mean_csection", "iatime_sd_csection", "iatime_skew_csection", "iatime_kurt_csection",
-            "iatime_mean_pp", "iatime_sd_pp", "iatime_skew_pp", "iatime_kurt_pp",
-            "occ_mean_obs", "occ_mean_ldr", "occ_mean_csect", "occ_mean_pp",
-            "occ_p95_obs", "occ_p95_ldr", "occ_p95_csect", "occ_p95_pp",
-            "pct_waitq_ldr", "waitq_ldr_mean", "waitq_ldr_p95",
-            "pct_blocked_by_pp", "blocked_by_pp_mean", "blocked_by_pp_p95"]
+    # cols = ["scenario", "rep", "timestamp", "num_days",
+    #         "num_visits_obs", "num_visits_ldr", "num_visits_pp", "num_visits_csect",
+    #         "planned_los_mean_obs", "actual_los_mean_obs", "planned_los_sd_obs", "actual_los_sd_obs",
+    #         "planned_los_cv2_obs", "actual_los_cv2_obs",
+    #         "planned_los_skew_obs", "actual_los_skew_obs", "planned_los_kurt_obs", "actual_los_kurt_obs",
+    #         "planned_los_mean_ldr", "actual_los_mean_ldr", "planned_los_sd_ldr", "actual_los_sd_ldr",
+    #         "planned_los_cv2_ldr", "actual_los_cv2_ldr",
+    #         "planned_los_skew_ldr", "actual_los_skew_ldr", "planned_los_kurt_ldr", "actual_los_kurt_ldr",
+    #         "planned_los_mean_pp", "actual_los_mean_pp", "planned_los_sd_pp", "actual_los_sd_pp",
+    #         "planned_los_cv2_pp", "actual_los_cv2_pp",
+    #         "planned_los_skew_pp", "actual_los_skew_pp", "planned_los_kurt_pp", "actual_los_kurt_pp",
+    #         "planned_los_mean_csect", "actual_los_mean_csect", "planned_los_sd_csect", "actual_los_sd_csect",
+    #         "planned_los_cv2_csect", "actual_los_cv2_csect",
+    #         "planned_los_skew_csect", "actual_los_skew_csect", "planned_los_kurt_csect", "actual_los_kurt_csect",
+    #         "iatime_mean_obs", "iatime_sd_obs", "iatime_skew_obs", "iatime_kurt_obs",
+    #         "iatime_mean_ldr", "iatime_sd_ldr", "iatime_skew_ldr", "iatime_kurt_ldr",
+    #         "iatime_mean_csection", "iatime_sd_csection", "iatime_skew_csection", "iatime_kurt_csection",
+    #         "iatime_mean_pp", "iatime_sd_pp", "iatime_skew_pp", "iatime_kurt_pp",
+    #         "occ_mean_obs", "occ_mean_ldr", "occ_mean_csect", "occ_mean_pp",
+    #         "occ_p95_obs", "occ_p95_ldr", "occ_p95_csect", "occ_p95_pp",
+    #         "pct_waitq_ldr", "waitq_ldr_mean", "waitq_ldr_p95",
+    #         "pct_blocked_by_pp", "blocked_by_pp_mean", "blocked_by_pp_p95"]
 
     output_csv_file = output_path / f'{output_file_stem}.csv'
-    results_df = results_df[cols]
+    #results_df = results_df[cols]
     results_df = results_df.sort_values(by=['scenario', 'rep'])
     results_df.to_csv(output_csv_file, index=False)
+    
+    return active_units
 
 
 def compute_occ_stats(obsystem, end_time, egress=False, log_path=None, warmup=0,
@@ -321,31 +232,32 @@ def compute_occ_stats(obsystem, end_time, egress=False, log_path=None, warmup=0,
     occ_stats_dfs = []
     occ_dfs = []
     for unit in obsystem.obunits:
-        occ = unit.occupancy_list
+        if len(unit.occupancy_list) > 1:
+            occ = unit.occupancy_list
 
-        df = pd.DataFrame(occ, columns=['timestamp', 'occ'])
-        df['occ_weight'] = -1 * df['timestamp'].diff(periods=-1)
+            df = pd.DataFrame(occ, columns=['timestamp', 'occ'])
+            df['occ_weight'] = -1 * df['timestamp'].diff(periods=-1)
 
-        last_weight = end_time - df.iloc[-1, 0]
-        df.fillna(last_weight, inplace=True)
-        df['unit'] = unit.name
-        occ_dfs.append(df)
+            last_weight = end_time - df.iloc[-1, 0]
+            df.fillna(last_weight, inplace=True)
+            df['unit'] = unit.name
+            occ_dfs.append(df)
 
-        # Filter out recs before warmup
-        df = df[df['timestamp'] > warmup]
+            # Filter out recs before warmup
+            df = df[df['timestamp'] > warmup]
 
-        weighted_stats = DescrStatsW(df['occ'], weights=df['occ_weight'], ddof=0)
+            weighted_stats = DescrStatsW(df['occ'], weights=df['occ_weight'], ddof=0)
 
-        occ_quantiles = weighted_stats.quantile(quantiles)
-        occ_unit_stats_df = pd.DataFrame([{'unit': unit.name, 'capacity': unit.capacity,
-                                           'mean_occ': weighted_stats.mean, 'sd_occ': weighted_stats.std,
-                                           'min_occ': df['occ'].min(), 'max_occ': df['occ'].max()}])
+            occ_quantiles = weighted_stats.quantile(quantiles)
+            occ_unit_stats_df = pd.DataFrame([{'unit': unit.name, 'capacity': unit.capacity,
+                                               'mean_occ': weighted_stats.mean, 'sd_occ': weighted_stats.std,
+                                               'min_occ': df['occ'].min(), 'max_occ': df['occ'].max()}])
 
-        quantiles_df = pd.DataFrame(occ_quantiles).transpose()
-        quantiles_df.rename(columns=lambda x: f"p{100 * x:02.0f}_occ", inplace=True)
+            quantiles_df = pd.DataFrame(occ_quantiles).transpose()
+            quantiles_df.rename(columns=lambda x: f"p{100 * x:02.0f}_occ", inplace=True)
 
-        occ_unit_stats_df = pd.concat([occ_unit_stats_df, quantiles_df], axis=1)
-        occ_stats_dfs.append(occ_unit_stats_df)
+            occ_unit_stats_df = pd.concat([occ_unit_stats_df, quantiles_df], axis=1)
+            occ_stats_dfs.append(occ_unit_stats_df)
 
     occ_stats_df = pd.concat(occ_stats_dfs)
 
@@ -365,120 +277,74 @@ def output_header(msg, line_len, scenario, rep_num):
     return header
 
 
-# def qng_approx(scenario_inputs_summary):
-#     results = []
 #
-#     for row in scenario_inputs_summary.iterrows():
-#         scenario = row[1]['scenario']
-#         arr_rate = row[1]['arrival_rate']
-#         c_sect_prob = row[1]['c_sect_prob']
-#         ldr_mean_svctime = row[1]['mean_los_ldr']
-#         ldr_cv2_svctime = 1 / row[1]['num_erlang_stages_ldr']
-#         ldr_cap = row[1]['cap_ldr']
-#         pp_mean_svctime = c_sect_prob * row[1]['mean_los_pp_c'] + (1 - c_sect_prob) * row[1]['mean_los_pp_noc']
-#
-#         rates = [1 / row[1]['mean_los_pp_c'], 1 / row[1]['mean_los_pp_noc']]
-#         probs = [c_sect_prob, 1 - c_sect_prob]
-#         stages = [int(row[1]['num_erlang_stages_pp']), int(row[1]['num_erlang_stages_pp'])]
-#         moments = [hyper_erlang_moment(rates, stages, probs, moment) for moment in [1, 2]]
-#         variance = moments[1] - moments[0] ** 2
-#         cv2 = variance / moments[0] ** 2
-#
-#         pp_cv2_svctime = cv2
-#
-#         pp_cap = row[1]['cap_pp']
-#         sim_mean_waitq_ldr_mean = row[1]['mean_waitq_ldr_mean']
-#         sim_mean_pct_waitq_ldr = row[1]['mean_pct_waitq_ldr']
-#         sim_actual_los_mean_mean_ldr = row[1]['actual_los_mean_mean_ldr']
-#         sim_mean_pct_blocked_by_pp = row[1]['mean_pct_blocked_by_pp']
-#         sim_mean_blocked_by_pp_mean = row[1]['mean_blocked_by_pp_mean']
-#
-#         ldr_pct_blockedby_pp = obnetwork.prob_blockedby_pp_hat(arr_rate, pp_mean_svctime, pp_cap, pp_cv2_svctime)
-#         ldr_meantime_blockedby_pp = obnetwork.condmeantime_blockedby_pp_hat(arr_rate, pp_mean_svctime, pp_cap,
-#                                                                             pp_cv2_svctime)
-#         (obs_meantime_blockedbyldr, ldr_effmean_svctime, obs_prob_blockedby_ldr, obs_condmeantime_blockedbyldr) = \
-#             obnetwork.obs_blockedby_ldr_hats(arr_rate, c_sect_prob, ldr_mean_svctime, ldr_cv2_svctime, ldr_cap,
-#                                              pp_mean_svctime, pp_cv2_svctime, pp_cap)
-#
-#         ldr_eff_load = arr_rate * ldr_effmean_svctime
-#         ldr_eff_sqrtload = (arr_rate * ldr_effmean_svctime) ** 0.5
-#
-#         scen_results = {'scenario': scenario,
-#                         'arr_rate': arr_rate,
-#                         'prob_blockedby_ldr_approx': obs_prob_blockedby_ldr,
-#                         'prob_blockedby_ldr_sim': sim_mean_pct_waitq_ldr,
-#
-#                         'condmeantime_blockedbyldr_approx': obs_condmeantime_blockedbyldr,
-#                         'condmeantime_blockedbyldr_sim': sim_mean_waitq_ldr_mean,
-#                         'ldr_effmean_svctime_approx': ldr_effmean_svctime,
-#                         'ldr_effmean_svctime_sim': sim_actual_los_mean_mean_ldr,
-#                         'prob_blockedby_pp_approx': ldr_pct_blockedby_pp,
-#                         'prob_blockedby_pp_sim': sim_mean_pct_blocked_by_pp,
-#                         'condmeantime_blockedbypp_approx': ldr_meantime_blockedby_pp,
-#                         'condmeantime_blockedbypp_sim': sim_mean_blocked_by_pp_mean,
-#                         'ldr_eff_load': ldr_eff_load,
-#                         'ldr_eff_sqrtload': ldr_eff_sqrtload}
-#
-#         results.append(scen_results)
-#
-#         # print("scenario {}\n".format(scenario))
-#         # print(results)
-#
-#     results_df = pd.DataFrame(results)
-#     return results_df
 
-
-def aggregate_over_reps(scen_rep_summary_path):
+def aggregate_over_reps(scen_rep_summary_path, active_units=('OBS', 'LDR', 'CSECT', 'PP')):
     """Compute summary stats by scenario (aggregating over replications)"""
 
     output_stats_summary_df = pd.read_csv(scen_rep_summary_path).sort_values(by=['scenario', 'rep'])
 
-    output_stats_summary_agg_df = output_stats_summary_df.groupby(['scenario']).agg(
-        num_visits_obs_mean=pd.NamedAgg(column='num_visits_obs', aggfunc='mean'),
-        num_visits_ldr_mean=pd.NamedAgg(column='num_visits_ldr', aggfunc='mean'),
-        num_visits_csect_mean=pd.NamedAgg(column='num_visits_csect', aggfunc='mean'),
-        num_visits_pp_mean=pd.NamedAgg(column='num_visits_pp', aggfunc='mean'),
+    unit_dfs = []
 
-        planned_los_mean_mean_obs=pd.NamedAgg(column='planned_los_mean_obs', aggfunc='mean'),
-        planned_los_mean_mean_ldr=pd.NamedAgg(column='planned_los_mean_ldr', aggfunc='mean'),
-        planned_los_mean_mean_csect=pd.NamedAgg(column='planned_los_mean_csect', aggfunc='mean'),
-        planned_los_mean_mean_pp=pd.NamedAgg(column='planned_los_mean_pp', aggfunc='mean'),
+    # Need better, more generalizable way to do this, but good enough for now.
+    if 'OBS' in active_units:
+        output_stats_summary_agg_obs_df = output_stats_summary_df.groupby(['scenario']).agg(
+            num_visits_obs_mean=pd.NamedAgg(column='num_visits_obs', aggfunc='mean'),
+            planned_los_mean_mean_obs=pd.NamedAgg(column='planned_los_mean_obs', aggfunc='mean'),
+            actual_los_mean_mean_obs=pd.NamedAgg(column='actual_los_mean_obs', aggfunc='mean'),
+            planned_los_mean_cv2_obs=pd.NamedAgg(column='planned_los_cv2_obs', aggfunc='mean'),
+            actual_los_mean_cv2_obs=pd.NamedAgg(column='actual_los_cv2_obs', aggfunc='mean'),
+            occ_mean_mean_obs=pd.NamedAgg(column='occ_mean_obs', aggfunc='mean'),
+            occ_mean_p95_obs=pd.NamedAgg(column='occ_p95_obs', aggfunc='mean'),
+            prob_blockedby_ldr=pd.NamedAgg(column='pct_waitq_ldr', aggfunc='mean'),
+            condmeantime_blockedby_ldr=pd.NamedAgg(column='waitq_ldr_mean', aggfunc='mean'),
+            condp95time_blockedby_ldr=pd.NamedAgg(column='waitq_ldr_p95', aggfunc='mean')
+        )
+        unit_dfs.append(output_stats_summary_agg_obs_df)
+        
+    if 'LDR' in active_units:
+        output_stats_summary_agg_ldr_df = output_stats_summary_df.groupby(['scenario']).agg(
+            num_visits_ldr_mean=pd.NamedAgg(column='num_visits_ldr', aggfunc='mean'),
+            planned_los_mean_mean_ldr=pd.NamedAgg(column='planned_los_mean_ldr', aggfunc='mean'),
+            actual_los_mean_mean_ldr=pd.NamedAgg(column='actual_los_mean_ldr', aggfunc='mean'),
+            planned_los_mean_cv2_ldr=pd.NamedAgg(column='planned_los_cv2_ldr', aggfunc='mean'),
+            actual_los_mean_cv2_ldr=pd.NamedAgg(column='actual_los_cv2_ldr', aggfunc='mean'),
+            occ_mean_mean_ldr=pd.NamedAgg(column='occ_mean_ldr', aggfunc='mean'),
+            occ_mean_p95_ldr=pd.NamedAgg(column='occ_p95_ldr', aggfunc='mean'),
+            prob_blockedby_pp=pd.NamedAgg(column='pct_blocked_by_pp', aggfunc='mean'),
+            condmeantime_blockedby_pp=pd.NamedAgg(column='blocked_by_pp_mean', aggfunc='mean'),
+            condp95time_blockedby_pp=pd.NamedAgg(column='blocked_by_pp_p95', aggfunc='mean')
+        )
+        unit_dfs.append(output_stats_summary_agg_ldr_df)
+        
+    if 'CSECT' in active_units:
+        output_stats_summary_agg_csect_df = output_stats_summary_df.groupby(['scenario']).agg(
+            num_visits_csect_mean=pd.NamedAgg(column='num_visits_csect', aggfunc='mean'),
+            planned_los_mean_mean_csect=pd.NamedAgg(column='planned_los_mean_csect', aggfunc='mean'),
+            actual_los_mean_mean_csect=pd.NamedAgg(column='actual_los_mean_csect', aggfunc='mean'),
+            planned_los_mean_cv2_csect=pd.NamedAgg(column='planned_los_cv2_csect', aggfunc='mean'),
+            actual_los_mean_cv2_csect=pd.NamedAgg(column='actual_los_cv2_csect', aggfunc='mean'),
+            occ_mean_mean_csect=pd.NamedAgg(column='occ_mean_csect', aggfunc='mean'),
+            occ_mean_p95_csect=pd.NamedAgg(column='occ_p95_csect', aggfunc='mean')
+        )
+        unit_dfs.append(output_stats_summary_agg_csect_df)
+        
+    if 'PP' in active_units:
+        output_stats_summary_agg_pp_df = output_stats_summary_df.groupby(['scenario']).agg(
+            num_visits_pp_mean=pd.NamedAgg(column='num_visits_pp', aggfunc='mean'),
+            planned_los_mean_mean_pp=pd.NamedAgg(column='planned_los_mean_pp', aggfunc='mean'),
+            actual_los_mean_mean_pp=pd.NamedAgg(column='actual_los_mean_pp', aggfunc='mean'),
+            planned_los_mean_cv2_pp=pd.NamedAgg(column='planned_los_cv2_pp', aggfunc='mean'),
+            actual_los_mean_cv2_pp=pd.NamedAgg(column='actual_los_cv2_pp', aggfunc='mean'),
+            occ_mean_mean_pp=pd.NamedAgg(column='occ_mean_pp', aggfunc='mean'),
+            occ_mean_p95_pp=pd.NamedAgg(column='occ_p95_pp', aggfunc='mean')
+        )
+        unit_dfs.append(output_stats_summary_agg_pp_df)
 
-        actual_los_mean_mean_obs=pd.NamedAgg(column='actual_los_mean_obs', aggfunc='mean'),
-        actual_los_mean_mean_ldr=pd.NamedAgg(column='actual_los_mean_ldr', aggfunc='mean'),
-        actual_los_mean_mean_csect=pd.NamedAgg(column='actual_los_mean_csect', aggfunc='mean'),
-        actual_los_mean_mean_pp=pd.NamedAgg(column='actual_los_mean_pp', aggfunc='mean'),
-
-        planned_los_mean_cv2_obs=pd.NamedAgg(column='planned_los_cv2_obs', aggfunc='mean'),
-        planned_los_mean_cv2_ldr=pd.NamedAgg(column='planned_los_cv2_ldr', aggfunc='mean'),
-        planned_los_mean_cv2_csect=pd.NamedAgg(column='planned_los_cv2_csect', aggfunc='mean'),
-        planned_los_mean_cv2_pp=pd.NamedAgg(column='planned_los_cv2_pp', aggfunc='mean'),
-
-        actual_los_mean_cv2_obs=pd.NamedAgg(column='actual_los_cv2_obs', aggfunc='mean'),
-        actual_los_mean_cv2_ldr=pd.NamedAgg(column='actual_los_cv2_ldr', aggfunc='mean'),
-        actual_los_mean_cv2_csect=pd.NamedAgg(column='actual_los_cv2_csect', aggfunc='mean'),
-        actual_los_mean_cv2_pp=pd.NamedAgg(column='actual_los_cv2_pp', aggfunc='mean'),
-
-        occ_mean_mean_obs=pd.NamedAgg(column='occ_mean_obs', aggfunc='mean'),
-        occ_mean_mean_ldr=pd.NamedAgg(column='occ_mean_ldr', aggfunc='mean'),
-        occ_mean_mean_csect=pd.NamedAgg(column='occ_mean_csect', aggfunc='mean'),
-        occ_mean_mean_pp=pd.NamedAgg(column='occ_mean_pp', aggfunc='mean'),
-
-        occ_mean_p95_obs=pd.NamedAgg(column='occ_p95_obs', aggfunc='mean'),
-        occ_mean_p95_ldr=pd.NamedAgg(column='occ_p95_ldr', aggfunc='mean'),
-        occ_mean_p95_csect=pd.NamedAgg(column='occ_p95_csect', aggfunc='mean'),
-        occ_mean_p95_pp=pd.NamedAgg(column='occ_p95_pp', aggfunc='mean'),
-
-        prob_blockedby_ldr=pd.NamedAgg(column='pct_waitq_ldr', aggfunc='mean'),
-        condmeantime_blockedby_ldr=pd.NamedAgg(column='waitq_ldr_mean', aggfunc='mean'),
-        condp95time_blockedby_ldr=pd.NamedAgg(column='waitq_ldr_p95', aggfunc='mean'),
-
-        prob_blockedby_pp=pd.NamedAgg(column='pct_blocked_by_pp', aggfunc='mean'),
-        condmeantime_blockedby_pp=pd.NamedAgg(column='blocked_by_pp_mean', aggfunc='mean'),
-        condp95time_blockedby_pp=pd.NamedAgg(column='blocked_by_pp_p95', aggfunc='mean'),
-    )
+    output_stats_summary_agg_df = pd.concat(unit_dfs, axis=1)
 
     return output_stats_summary_agg_df
+
 
 
 def conf_intervals(scenario_rep_summary_df):
@@ -522,7 +388,7 @@ def conf_intervals(scenario_rep_summary_df):
 def create_sim_summaries(output_path, suffix,
                          include_inputs=True,
                          scenario_inputs_path=None,
-                         include_qng_approx=True,
+                         active_units=('OBS', 'LDR', 'CSECT', 'PP')
                          ):
     scenario_rep_simout_stem_ = f'scenario_rep_simout_{suffix}'
     scenario_simout_stem = f'scenario_simout_{suffix}'
@@ -534,7 +400,7 @@ def create_sim_summaries(output_path, suffix,
     scenario_rep_simout_df = pd.read_csv(scenario_rep_simout_path)
     scenario_simout_path = output_path / f"{scenario_simout_stem}.csv"
     scenario_siminout_path = output_path / f"{scenario_siminout_stem}.csv"
-    scenario_simout_df = aggregate_over_reps(scenario_rep_simout_path)
+    scenario_simout_df = aggregate_over_reps(scenario_rep_simout_path, active_units)
     scenario_simout_df.to_csv(scenario_simout_path, index=True)
 
     scenario_ci_df = conf_intervals(scenario_rep_simout_df)
@@ -651,15 +517,17 @@ def varsum(df, unit, pm, alpha):
 if __name__ == '__main__':
 
     inputs = process_command_line()
+    active_units = ('OBS', 'LDR', 'CSECT', 'PP')
 
     if inputs.process_logs:
         # From the patient stop logs, compute summary stats by scenario by replication
         scenario_rep_summary_stem = f'scenario_rep_simout_{inputs.suffix}'
 
-        process_obsim_logs(Path(inputs.stop_log_path), Path(inputs.occ_stats_path),
+        active_units = process_obsim_logs(Path(inputs.stop_log_path), Path(inputs.occ_stats_path),
                            Path(inputs.output_path), inputs.run_time, warmup=inputs.warmup_time,
                            output_file_stem=scenario_rep_summary_stem)
 
     create_sim_summaries(Path(inputs.output_path), inputs.suffix,
                          include_inputs=inputs.include_inputs,
-                         scenario_inputs_path=inputs.scenario_inputs_path)
+                         scenario_inputs_path=inputs.scenario_inputs_path,
+                         active_units=active_units)
