@@ -82,7 +82,8 @@ def process_obsim_logs(stop_log_path, occ_stats_path, output_path,
         # Read the log file and filter by included categories
         stops_df = pd.read_csv(log_fn)
 
-        stops_df = stops_df[(stops_df['entry_ts'] <= end_analysis) & (stops_df['exit_ts'] >= start_analysis)]
+        stops_df = stops_df[(stops_df['entry_ts'] <= end_analysis) & (stops_df['exit_ts'] >= start_analysis) & \
+                   (stops_df['entry_ts'] < stops_df['exit_ts'])]
 
         # LOS means and sds - planned and actual
         stops_df_grp_unit = stops_df.groupby(['unit'])
@@ -110,12 +111,14 @@ def process_obsim_logs(stop_log_path, occ_stats_path, output_path,
         
         # Number of visits to each unit
         for unit in units:
-            if (unit, 'delay_count') in blocked_cond_stats.index:
+            if (unit, 'delay_count') in blocked_uncond_stats.index:
                 newrec[f'num_visits_{unit.lower()}'] = blocked_uncond_stats[(unit, 'delay_count')]
             else:
                 newrec[f'num_visits_{unit.lower()}'] = 0
 
-        # LOS stats for each unit
+            #newrec[f'num_visits_{unit.lower()}'] = stops_df_grp_unit['exit_ts'].count()[unit]
+
+            # LOS stats for each unit
         for unit in units:
             if newrec[f'num_visits_{unit.lower()}'] > 0:
                 active_units.append(unit)
@@ -162,25 +165,25 @@ def process_obsim_logs(stop_log_path, occ_stats_path, output_path,
                 newrec[f'occ_min_{unit.lower()}'] = occ_stats_df.loc[unit]['min_occ']
                 newrec[f'occ_max_{unit.lower()}'] = occ_stats_df.loc[unit]['max_occ']
 
-        newrec['pct_waitq_ldr'] = \
+        newrec['prob_blockedby_ldr'] = \
             blocked_uncond_stats[('LDR', 'delay_num_gt_0')] / blocked_uncond_stats[('LDR', 'delay_count')]
 
         if ('LDR', 'delay_mean') in blocked_cond_stats.index:
-            newrec['waitq_ldr_mean'] = blocked_cond_stats[('LDR', 'delay_mean')]
-            newrec['waitq_ldr_p95'] = blocked_cond_stats[('LDR', 'delay_p95')]
+            newrec['blockedby_ldr_mean'] = blocked_cond_stats[('LDR', 'delay_mean')]
+            newrec['blockedby_ldr_p95'] = blocked_cond_stats[('LDR', 'delay_p95')]
         else:
-            newrec['waitq_ldr_mean'] = 0.0
-            newrec['waitq_ldr_p95'] = 0.0
+            newrec['blockedby_ldr_mean'] = 0.0
+            newrec['blockedby_ldr_p95'] = 0.0
 
         newrec['pct_blocked_by_pp'] = \
             blocked_uncond_stats[('PP', 'delay_num_gt_0')] / blocked_uncond_stats[('PP', 'delay_count')]
 
         if ('PP', 'delay_mean') in blocked_cond_stats.index:
-            newrec['blocked_by_pp_mean'] = blocked_cond_stats[('PP', 'delay_mean')]
-            newrec['blocked_by_pp_p95'] = blocked_cond_stats[('PP', 'delay_p95')]
+            newrec['blockedby_pp_mean'] = blocked_cond_stats[('PP', 'delay_mean')]
+            newrec['blockedby_pp_p95'] = blocked_cond_stats[('PP', 'delay_p95')]
         else:
-            newrec['blocked_by_pp_mean'] = 0.0
-            newrec['blocked_by_pp_p95'] = 0.0
+            newrec['blockedby_pp_mean'] = 0.0
+            newrec['blockedby_pp_p95'] = 0.0
 
         newrec['timestamp'] = str(datetime.now())
 
@@ -216,8 +219,8 @@ def process_obsim_logs(stop_log_path, occ_stats_path, output_path,
     #         "iatime_mean_pp", "iatime_sd_pp", "iatime_skew_pp", "iatime_kurt_pp",
     #         "occ_mean_obs", "occ_mean_ldr", "occ_mean_csect", "occ_mean_pp",
     #         "occ_p95_obs", "occ_p95_ldr", "occ_p95_csect", "occ_p95_pp",
-    #         "pct_waitq_ldr", "waitq_ldr_mean", "waitq_ldr_p95",
-    #         "pct_blocked_by_pp", "blocked_by_pp_mean", "blocked_by_pp_p95"]
+    #         "prob_blockedby_ldr", "blockedby_ldr_mean", "blockedby_ldr_p95",
+    #         "pct_blocked_by_pp", "blockedby_pp_mean", "blockedby_pp_p95"]
 
     output_csv_file = output_path / f'{output_file_stem}.csv'
     #results_df = results_df[cols]
@@ -296,9 +299,9 @@ def aggregate_over_reps(scen_rep_summary_path, active_units=('OBS', 'LDR', 'CSEC
             actual_los_mean_cv2_obs=pd.NamedAgg(column='actual_los_cv2_obs', aggfunc='mean'),
             occ_mean_mean_obs=pd.NamedAgg(column='occ_mean_obs', aggfunc='mean'),
             occ_mean_p95_obs=pd.NamedAgg(column='occ_p95_obs', aggfunc='mean'),
-            prob_blockedby_ldr=pd.NamedAgg(column='pct_waitq_ldr', aggfunc='mean'),
-            condmeantime_blockedby_ldr=pd.NamedAgg(column='waitq_ldr_mean', aggfunc='mean'),
-            condp95time_blockedby_ldr=pd.NamedAgg(column='waitq_ldr_p95', aggfunc='mean')
+            prob_blockedby_ldr=pd.NamedAgg(column='prob_blockedby_ldr', aggfunc='mean'),
+            condmeantime_blockedby_ldr=pd.NamedAgg(column='blockedby_ldr_mean', aggfunc='mean'),
+            condp95time_blockedby_ldr=pd.NamedAgg(column='blockedby_ldr_p95', aggfunc='mean')
         )
         unit_dfs.append(output_stats_summary_agg_obs_df)
         
@@ -312,8 +315,8 @@ def aggregate_over_reps(scen_rep_summary_path, active_units=('OBS', 'LDR', 'CSEC
             occ_mean_mean_ldr=pd.NamedAgg(column='occ_mean_ldr', aggfunc='mean'),
             occ_mean_p95_ldr=pd.NamedAgg(column='occ_p95_ldr', aggfunc='mean'),
             prob_blockedby_pp=pd.NamedAgg(column='pct_blocked_by_pp', aggfunc='mean'),
-            condmeantime_blockedby_pp=pd.NamedAgg(column='blocked_by_pp_mean', aggfunc='mean'),
-            condp95time_blockedby_pp=pd.NamedAgg(column='blocked_by_pp_p95', aggfunc='mean')
+            condmeantime_blockedby_pp=pd.NamedAgg(column='blockedby_pp_mean', aggfunc='mean'),
+            condp95time_blockedby_pp=pd.NamedAgg(column='blockedby_pp_p95', aggfunc='mean')
         )
         unit_dfs.append(output_stats_summary_agg_ldr_df)
         
@@ -359,19 +362,19 @@ def conf_intervals(scenario_rep_summary_df):
     occ_mean_pp_ci = varsum(scenario_rep_summary_df, 'pp', 'occ_mean_pp', 0.05)
     occ_p05_pp_ci = varsum(scenario_rep_summary_df, 'pp', 'occ_p95_pp', 0.05)
 
-    pct_waitq_ldr_ci = varsum(scenario_rep_summary_df, 'ldr', 'pct_waitq_ldr', 0.05)
-    waitq_ldr_mean_ci = varsum(scenario_rep_summary_df, 'ldr', 'waitq_ldr_mean', 0.05)
-    waitq_ldr_p95_ci = varsum(scenario_rep_summary_df, 'ldr', 'waitq_ldr_p95', 0.05)
+    prob_blockedby_ldr_ci = varsum(scenario_rep_summary_df, 'ldr', 'prob_blockedby_ldr', 0.05)
+    blockedby_ldr_mean_ci = varsum(scenario_rep_summary_df, 'ldr', 'blockedby_ldr_mean', 0.05)
+    blockedby_ldr_p95_ci = varsum(scenario_rep_summary_df, 'ldr', 'blockedby_ldr_p95', 0.05)
 
     pct_blocked_by_pp_ci = varsum(scenario_rep_summary_df, 'pp', 'pct_blocked_by_pp', 0.05)
-    blocked_by_pp_mean_ci = varsum(scenario_rep_summary_df, 'pp', 'blocked_by_pp_mean', 0.05)
-    blocked_by_pp_p95_ci = varsum(scenario_rep_summary_df, 'pp', 'blocked_by_pp_p95', 0.05)
+    blockedby_pp_mean_ci = varsum(scenario_rep_summary_df, 'pp', 'blockedby_pp_mean', 0.05)
+    blockedby_pp_p95_ci = varsum(scenario_rep_summary_df, 'pp', 'blockedby_pp_p95', 0.05)
 
     ci_dfs = [occ_mean_obs_ci, occ_p05_obs_ci,
               occ_mean_ldr_ci, occ_p05_ldr_ci,
               occ_mean_pp_ci, occ_p05_pp_ci,
-              pct_waitq_ldr_ci, waitq_ldr_mean_ci, waitq_ldr_p95_ci,
-              pct_blocked_by_pp_ci, blocked_by_pp_mean_ci, blocked_by_pp_p95_ci]
+              prob_blockedby_ldr_ci, blockedby_ldr_mean_ci, blockedby_ldr_p95_ci,
+              pct_blocked_by_pp_ci, blockedby_pp_mean_ci, blockedby_pp_p95_ci]
 
     ci_df = pd.concat(ci_dfs)
     return ci_df
