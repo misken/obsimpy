@@ -1,6 +1,6 @@
 Getting started with using SimPy to build patient flow discrete event simulation models. 
 
-I fixed the following links so they now point to my new Bits Of Analytics blog.
+I fixed the following links so they now point to my new [Bits Of Analytics blog](https://bitsofanalytics.org/).
 
 - [Getting started with SimPy for patient flow modeling](https://bitsofanalytics.org/posts/simpy-getting-started-patflow-model/simpy-getting-started.html) 
 - [An object oriented SimPy patient flow simulation model](https://bitsofanalytics.org/posts/simpy-oo-patflow-model/simpy-oo-patflow-model.html)
