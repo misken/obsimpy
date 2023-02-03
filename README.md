@@ -1,10 +1,11 @@
-Getting started with using SimPy to build patient flow discrete event simulation models. See
+Getting started with using SimPy to build patient flow discrete event simulation models. 
 
-- [Getting started with SimPy for patient flow modeling](https://misken.github.io/blog/simpy-getting-started/)
-- [An object oriented SimPy patient flow simulation model](https://misken.github.io/blog/simpy-first-oo-patflow-model/)
+I fixed the following links so they now points to my new Bits Of Analytics blog.
+
+- [Getting started with SimPy for patient flow modeling](https://bitsofanalytics.org/posts/simpy-getting-started-patflow-model/simpy-getting-started.html) 
+- [An object oriented SimPy patient flow simulation model](https://bitsofanalytics.org/posts/simpy-oo-patflow-model/simpy-oo-patflow-model.html)
 
 Some more recent work includes:
 
-- [Using SimPy to simulate a vaccine clinic - Part 1](https://misken.github.io/blog/simpy_getting_started_vaccine_clinic/)
-- [Using SimPy to simulate a vaccine clinic - Part 2](https://misken.github.io/blog/simpy_vaccine_clinic_improvements/)
-- [obflowsim project](https://github.com/misken/obflowsim)
+- [Using SimPy to simulate a vaccine clinic - Part 1](https://bitsofanalytics.org/posts/simpy-vaccine-clinic-part1/simpy_getting_started_vaccine_clinic.html)
+- [Using SimPy to simulate a vaccine clinic - Part 2](https://bitsofanalytics.org/posts/simpy-vaccine-clinic-part2/simpy_vaccine_clinic_improvements.html)
